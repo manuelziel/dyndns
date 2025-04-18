@@ -7,13 +7,10 @@
 # 
 # Author: Manuel Ziel
 # Date: 17-04-2025
-# Version: 1.0
+# Version: 1.0.1
 # License: MIT
 #
 # This program is free software: you can redistribute it and/or modify
-
-
-printf "Starting the setup script for IONOS-DynDNS...\n"
 
 # Colors
 GREEN='\033[0;32m'
@@ -23,7 +20,7 @@ NC='\033[0m' # No Color
 
 # Check if the script is run as root or with sudo
 if [[ $EUID -ne 0 ]]; then
-    printf "${RED}Run as root${NC}\n"
+    printf "${RED}Run as root!${NC}\n"
     exit 1
 fi
 
@@ -66,46 +63,63 @@ function ask_for_confirmation() {
     printf "More information about IONOS-DynDNS can be found in the README.md\n"
     printf "Exit with Ctrl+C\n"
     printf "\n"
-    read -p "setup the IONOS-DynDNS with user: $CURRENT_USER? (y/n): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        printf "Setup aborted\n"
-        exit 1
-    fi
-    return 0
+    while true; do
+        read -p "Setup the IONOS-DynDNS with user: $CURRENT_USER? (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            return 0
+        elif [[ $REPLY =~ ^[Nn]$ ]]; then
+            printf "Setup aborted\n"
+            exit 1
+        else
+            printf "Invalid input. Please enter 'y' or 'n'.\n"
+        fi
+    done
 }
 
 function ask_install_uninstall() {
-    read -p "install/update and configure IONOS-DynDNS? (y/n): " -n 1 -r
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        printf "${GREEN}Install/Updating IONOS-DynDNS...${NC}\n"
-        stop_service
-        check_python3
-        service_template
-        copy_files
-
-        if start_service; then 
-            exit 1
-        else 
-            exit 1
-        fi
-
-    elif [[ $REPLY =~ ^[Nn]$ ]]; then
-        printf "\n"
-        read -p "uninstall IONOS-DynDNS? (y/n): " -n 1 -r
+    while true; do
+        read -p "Install/Update and configure IONOS-DynDNS? (y/n): " -n 1 -r
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            if uninstall; then
-                exit 0
-            else
+            printf "\n"
+            printf "${GREEN}Installing/Updating IONOS-DynDNS...${NC}\n"
+            stop_service
+            check_python3
+            service_template
+            copy_files
+
+            if start_service; then 
+                printf "${GREEN}IONOS-DynDNS installed successfully${NC}\n"
+                return 0
+            else 
+                printf "${RED}Error: Starting IONOS-DynDNS${NC}\n"
                 exit 1
             fi
+
         elif [[ $REPLY =~ ^[Nn]$ ]]; then
-                printf "\n"
-                printf "Exiting setup script!\n"
+            printf "\n"
+            while true; do
+                read -p "Uninstall IONOS-DynDNS? (y/n): " -n 1 -r
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    printf "\n"
+                    if uninstall; then
+                        return 0
+                    else
+                        exit 1
+                    fi
+                elif [[ $REPLY =~ ^[Nn]$ ]]; then
+                    printf "\n"
+                    printf "Exiting setup script!\n"
+                    exit 0
+                else
+                    printf "\n"
+                    printf "${RED}Invalid input. Please enter 'y' or 'n'.${NC}\n"
+                fi
+            done
+        else
+            printf "${RED}Invalid input. Please enter 'y' or 'n'.${NC}\n"
         fi
-    else
-        printf "${RED}Invalid option.${NC}\n"
-    fi
+    done
 }
 
 function stop_service() {
@@ -165,26 +179,33 @@ function service_template() {
         return 0
     else
         printf "${GREEN}Service template found${NC}\n"
-        read -p "Do you want to update the service template? (y/n): " -n 1 -r
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            printf "${GREEN}Updating service template...${NC}\n"
-            echo "$IONOS_DYNDNS_SERVICE_TEMPLATE" | sudo tee "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH" > /dev/null
-            if [ $? -ne 0 ]; then
-                printf "${RED}Error: Updating service template${NC}\n"
-                return 1
-            fi
+        while true; do
+            read -p "Update the service template? (y/n): " -n 1 -r
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                printf "\n"
+                printf "${GREEN}Updating service template...${NC}\n"
+                echo "$IONOS_DYNDNS_SERVICE_TEMPLATE" | sudo tee "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH" > /dev/null
+                if [ $? -ne 0 ]; then
+                    printf "${RED}Error: Updating service template${NC}\n"
+                    return 1
+                fi
 
-            if configure_service; then
-                configure_service_template $NAME $BULKID $API_KEY $ZONE $UPDATE_TIME 
+                if configure_service; then
+                    configure_service_template $NAME $BULKID $API_KEY $ZONE $UPDATE_TIME 
+                    return 0
+                else
+                    printf "${RED}Service template not configured${NC}\n"
+                    return 1
+                fi
+            elif [[ $REPLY =~ ^[Nn]$ ]]; then
+                printf "\n"
+                printf "${YELLOW}Service template not updated${NC}\n"
                 return 0
             else
-                printf "${RED}Service template not configured${NC}\n"
-                return 1
+                printf "\n"
+                printf "${RED}Invalid input. Please enter 'y' or 'n'.${NC}\n"
             fi
-        else
-            printf "${YELLOW}Service template not updated${NC}\n"
-            return 0
-        fi
+        done
     fi
 }
 
@@ -194,12 +215,14 @@ function configure_service() {
     local api_key
     local zone
     local update_time
-
-    read -p "Configure IONOS-DynDNS? (y/n): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        printf "\nPlease enter the following parameter\n"
-        while true; do
+    
+    while true; do
+        read -p "Configure IONOS-DynDNS? (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            printf "\n"
+            printf "Please enter the following parameter\n"
+            
             printf "Enter the name (Zugriffsschlüsselname)\n"
             printf "Enter the bulkId (Öffentlicher Präfix)\n"
             printf "Enter the api-key (API-Zugriffsschlüssel)\n"
@@ -212,38 +235,57 @@ function configure_service() {
             read -p "zone: " zone
             read -p "Update time (default: 5): " update_time
 
-            printf "\nYou entered the following information:\n"
+            printf "\n"
+            printf "You entered the following information:\n"
             printf "Name: ${name}\n"
             printf "BulkId: ${bulkId}\n"
             printf "API-Key: ${api_key}\n"
             printf "Zone: ${zone}\n"
             printf "Update time: ${update_time}\n"
 
-            read -p "Is the input correct? (y/n): " -n 1 -r
-            printf "\n\n"
-
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                printf "${RED}Ensure that port 80 and 443 on this server are not blocked by a firewall!${NC}\n"
-                printf "\n"
-
-                read -p "Do you want to continue? (y/n): " -n 1 -r
-                printf "\n"
+            while true; do
+                read -p "Is the input correct? (y/n): " -n 1 -r
+                printf "\n\n"
 
                 if [[ $REPLY =~ ^[Yy]$ ]]; then
-                    NAME=$name
-                    BULKID=$bulkId
-                    API_KEY=$api_key
-                    ZONE=$zone
-                    UPDATE_TIME=$update_time
-                    return 0
+                    printf "${RED}Ensure that port 80 and 443 on this server are not blocked by a firewall!${NC}\n"
+                    printf "\n"
+
+                    while true; do
+                        read -p "Do you want to continue? (y/n): " -n 1 -r
+                        printf "\n"
+
+                        if [[ $REPLY =~ ^[Yy]$ ]]; then
+                            NAME=$name
+                            BULKID=$bulkId
+                            API_KEY=$api_key
+                            ZONE=$zone
+                            UPDATE_TIME=$update_time
+                            return 0
+                        elif [[ $REPLY =~ ^[Nn]$ ]]; then
+                            break
+                        else
+                            printf "${RED}Invalid input. Enter 'y' or 'n'.${NC}\n"
+                        fi
+                    done
+                elif [[ $REPLY =~ ^[Nn]$ ]]; then
+                    printf "\n"
+                    printf "${RED}Enter the parameters again${NC}\n"
                     break
+                else
+                    printf "\n"
+                    printf "${RED}Invalid input. Enter 'y' or 'n'.${NC}\n"
                 fi
-            fi
-        done
-    else
-        printf "${RED}Configuration skipped${NC}\n"
-        return 1
-    fi
+            done
+        elif [[ $REPLY =~ ^[Nn]$ ]]; then
+            printf "\n"
+            printf "${YELLOW}Configuration skipped${NC}\n"
+            return 1
+        else
+            printf "\n"
+            printf "${RED}Invalid input. Enter 'y' or 'n'.${NC}\n"
+        fi
+    done
 }
 
 function configure_service_template() {
@@ -286,10 +328,17 @@ function configure_service_template() {
 
 function copy_files() {
     printf "Copying IONOS-DynDNS files...\n"
+
     sudo cp ionos-dyndns.py /usr/local/bin/ionos-dyndns.py
     if [ $? -ne 0 ]; then
-        printf "${RED}Error: Copying IONOS-DynDNS files${NC}\n"
-        return 1
+        printf "${YELLOW}No local file found, downloading it from git...${NC}\n"
+        curl -sL https://github.com/manuelziel/dyndns/raw/main/ionos-dyndns.py -o /usr/local/bin/ionos-dyndns.py
+        if [ $? -ne 0 ]; then
+            printf "${RED}Error: Downloading files from git${NC}\n"
+            return 1
+        else
+            printf "${GREEN}Files downloaded successfully${NC}\n"
+        fi
     fi
 
     sudo chmod +x /usr/local/bin/ionos-dyndns.py
@@ -302,7 +351,6 @@ function copy_files() {
 }
 
 function uninstall() {
-    printf "\n"
     printf "${GREEN}Uninstalling IONOS-DynDNS...${NC}\n"
     
     sudo systemctl stop ionos-dyndns.service
@@ -349,6 +397,7 @@ function start_service() {
 function main() {
     ask_for_confirmation
     ask_install_uninstall
+    exit 0
 }
 
 main

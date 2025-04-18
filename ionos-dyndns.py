@@ -2,7 +2,7 @@
 
 # Author: Manuel Ziel
 # Date: 17-04-2025
-# Version: 1.0.0
+# Version: 1.0.1
 # License: MIT
 #
 # This programm is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 # - Run the script to automatically manage your DNS records.
 # 
 # See https://developer.hosting.ionos.de/docs/dns for more information.
+# See https://github.com/manuelziel/dyndns for more information.
 
 import threading
 import requests
@@ -57,7 +58,7 @@ logging.basicConfig(stream=sys.stdout, format="%(asctime)s %(message)s", datefmt
 logger = logging.getLogger()
 logger.handlers[0].setFormatter(ColoredFormatter())
 
-help_link = "README.md"
+help_link = "https://github.com/manuelziel/dyndns"
 
 class NetworkData:
     def __init__(self, ipv4_address=None, ipv6_address=None, last_ipv4_address=None, last_ipv6_address=None):

@@ -31,7 +31,7 @@ The script:
 Run the following command to install IONOS DynDNS automatically:
 
 ```bash
-bash -c "$(wget -qO- https://github.com/manuelziel/dyndns/raw/main/scripts/install.sh)"
+curl -sL https://github.com/manuelziel/dyndns/raw/main/setup.sh | sudo bash
 ```
 ### **Manual Installation**
 Clone the repository:
@@ -110,6 +110,3 @@ This project is licensed under the **MIT License**. See the `LICENSE` file for d
 - **Author:** Manuel Ziel
 - **GitHub:** [manuelziel](https://github.com/manuelziel)
 - **IONOS DNS API Documentation:** [IONOS Developer Docs](https://developer.hosting.ionos.de/docs/dns)
-```
-
----
