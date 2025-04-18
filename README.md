@@ -31,7 +31,7 @@ The script:
 Run the following command to install IONOS DynDNS automatically:
 
 ```bash
-curl -sL https://github.com/manuelziel/dyndns/raw/main/setup.sh | sudo bash
+curl -sL -o setup.sh https://github.com/manuelziel/dyndns/raw/main/setup.sh && chmod +x setup.sh && sudo ./setup.sh
 ```
 ### **Manual Installation**
 Clone the repository:
