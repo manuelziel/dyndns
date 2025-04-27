@@ -6,8 +6,8 @@
 # It also provides options to install, update, and uninstall the service.
 # 
 # Author: Manuel Ziel
-# Date: 17-04-2025
-# Version: 1.0.1
+# Date: 27-04-2025
+# Version: 1.0.2
 # License: MIT
 #
 # This program is free software: you can redistribute it and/or modify
@@ -29,9 +29,11 @@ CURRENT_DIR=$(dirname "$(readlink -f "$0")")
 CURRENT_USER=$(whoami)
 
 # Template- and Service-Path
-IONOS_DYNDNS_SERVICE_TEMPLATE_PATH="/etc/systemd/system/ionos-dyndns.service"
+IONOS_DYNDNS_SERVICE_NAME="ionos-dyndns.service"
+IONOS_DYNDNS_SERVICE_TEMPLATE_PATH="/etc/systemd/system/$IONOS_DYNDNS_SERVICE_NAME"
 
 # Template for the systemd service
+# See the README.md for more information on configuration options.
 IONOS_DYNDNS_SERVICE_TEMPLATE="[Unit]
 Description=IONOS DynDNS Service
 After=network.target
@@ -70,7 +72,7 @@ function ask_for_confirmation() {
             return 0
         elif [[ $REPLY =~ ^[Nn]$ ]]; then
             printf "Setup aborted\n"
-            exit 1
+            return 1
         else
             printf "Invalid input. Please enter 'y' or 'n'.\n"
         fi
@@ -78,22 +80,32 @@ function ask_for_confirmation() {
 }
 
 function ask_install_uninstall() {
+    local templete_path=$1
+    local service_name=$2
     while true; do
         read -p "Install/Update and configure IONOS-DynDNS? (y/n): " -n 1 -r
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             printf "\n"
             printf "${GREEN}Installing/Updating IONOS-DynDNS...${NC}\n"
-            stop_service
-            check_python3
-            service_template
-            copy_files
+            if ! stop_service $service_name; then
+                return 1
+            fi
+            if ! check_python3; then 
+                return 1
+            fi
+            if ! service_template $templete_path; then
+                return 1
+            fi
+            if ! copy_files; then
+                return 1
+            fi 
 
-            if start_service; then 
+            if start_service $service_name; then 
                 printf "${GREEN}IONOS-DynDNS installed successfully${NC}\n"
                 return 0
             else 
                 printf "${RED}Error: Starting IONOS-DynDNS${NC}\n"
-                exit 1
+                return 1
             fi
 
         elif [[ $REPLY =~ ^[Nn]$ ]]; then
@@ -102,15 +114,15 @@ function ask_install_uninstall() {
                 read -p "Uninstall IONOS-DynDNS? (y/n): " -n 1 -r
                 if [[ $REPLY =~ ^[Yy]$ ]]; then
                     printf "\n"
-                    if uninstall; then
+                    if uninstall $service_name $templete_path; then
                         return 0
                     else
-                        exit 1
+                        return 1
                     fi
                 elif [[ $REPLY =~ ^[Nn]$ ]]; then
                     printf "\n"
                     printf "Exiting setup script!\n"
-                    exit 0
+                    return 1
                 else
                     printf "\n"
                     printf "${RED}Invalid input. Please enter 'y' or 'n'.${NC}\n"
@@ -123,23 +135,26 @@ function ask_install_uninstall() {
 }
 
 function stop_service() {
-    if IONOS_DYNDNS_SERVICE_NAME=$(systemctl list-units --type=service | grep ionos-dyndns.service); then
+    local service_name=$1
+    if IONOS_DYNDNS_SERVICE_NAME=$(systemctl list-units --type=service | grep $service_name); then
         printf "Stopping the IONOS-DynDNS Service...\n"
-        if systemctl is-active --quiet ionos-dyndns.service; then
-            sudo systemctl stop ionos-dyndns.service
-            if ! systemctl is-active --quiet ionos-dyndns.service; then
+        if systemctl is-active --quiet $service_name; then
+            sudo systemctl stop $service_name
+            if ! systemctl is-active --quiet $service_name; then
                 printf "${GREEN}IONOS-DynDNS stopped successfully${NC}\n"
                 return 0
             else
                 printf "${RED}Error: Stopping IONOS-DynDNS${NC}\n"
-                exit 1
+                return 1
             fi
         else
-            printf "IONOS-DynDNS is already stopped\n"    
+            printf "${GREEN}IONOS-DynDNS is already stopped${NC}\n" 
+            return 0   
         fi
     else
-        return 1
+        return 0
     fi
+    return 1
 }
 
 function check_python3() {
@@ -149,34 +164,38 @@ function check_python3() {
         if sudo apt install -y python3; then
             if ! command -v python3 &> /dev/null; then
                 printf "${RED}Error: python3 installation${NC}\n"
-                exit 1
+                return 1
             else 
                 printf "${GREEN}python3 installed successfully${NC}\n"
+                return 0
             fi
         else
             printf "${RED}Error: Installing python3${NC}\n"
-            exit 1
+            return 1
         fi
     else
         printf "python3 ${GREEN}INSTALLED${NC}\n"
+        return 0
     fi
-    return 0
+    return 1
 }
 
 function service_template() {
+    local templete_path=$1
     printf "Check service template...\n"
-    if [ ! -f "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH" ]; then
+    if [ ! -f "$templete_path" ]; then
         printf "${YELLOW}Service template not found, creating it...${NC}\n"
-        echo "$IONOS_DYNDNS_SERVICE_TEMPLATE" | sudo tee "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH" > /dev/null
-        if [ $? -ne 0 ]; then
+        if echo "$IONOS_DYNDNS_SERVICE_TEMPLATE" | sudo tee "$templete_path" > /dev/null; then # Do not change this line. Multiline string!
+            printf "${GREEN}Service template created successfully${NC}\n"
+            if configure_service $templete_path; then
+                return 0
+            else
+                return 1
+            fi
+        else 
             printf "${RED}Error: Creating service template${NC}\n"
             return 1
         fi
-        printf "${GREEN}Service template created successfully${NC}\n"
-        if configure_service; then
-            configure_service_template $NAME $BULKID $API_KEY $ZONE $UPDATE_TIME 
-        fi
-        return 0
     else
         printf "${GREEN}Service template found${NC}\n"
         while true; do
@@ -184,17 +203,17 @@ function service_template() {
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 printf "\n"
                 printf "${GREEN}Updating service template...${NC}\n"
-                echo "$IONOS_DYNDNS_SERVICE_TEMPLATE" | sudo tee "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH" > /dev/null
+                echo "$IONOS_DYNDNS_SERVICE_TEMPLATE" | sudo tee "$templete_path" > /dev/null # Do not change this line. Multiline string!
                 if [ $? -ne 0 ]; then
                     printf "${RED}Error: Updating service template${NC}\n"
                     return 1
+                else 
+                    printf "${GREEN}Service template updated successfully${NC}\n"
                 fi
 
-                if configure_service; then
-                    configure_service_template $NAME $BULKID $API_KEY $ZONE $UPDATE_TIME 
+                if configure_service $templete_path; then
                     return 0
                 else
-                    printf "${RED}Service template not configured${NC}\n"
                     return 1
                 fi
             elif [[ $REPLY =~ ^[Nn]$ ]]; then
@@ -210,6 +229,7 @@ function service_template() {
 }
 
 function configure_service() {
+    local templete_path=$1
     local name
     local bulkId
     local api_key
@@ -256,12 +276,11 @@ function configure_service() {
                         printf "\n"
 
                         if [[ $REPLY =~ ^[Yy]$ ]]; then
-                            NAME=$name
-                            BULKID=$bulkId
-                            API_KEY=$api_key
-                            ZONE=$zone
-                            UPDATE_TIME=$update_time
-                            return 0
+                            if configure_service_template $templete_path $name $bulkId $api_key $zone $update_time; then
+                                return 0
+                            else 
+                                return 1
+                            fi
                         elif [[ $REPLY =~ ^[Nn]$ ]]; then
                             break
                         else
@@ -280,7 +299,7 @@ function configure_service() {
         elif [[ $REPLY =~ ^[Nn]$ ]]; then
             printf "\n"
             printf "${YELLOW}Configuration skipped${NC}\n"
-            return 1
+            return 0
         else
             printf "\n"
             printf "${RED}Invalid input. Enter 'y' or 'n'.${NC}\n"
@@ -289,36 +308,36 @@ function configure_service() {
 }
 
 function configure_service_template() {
-    local name=$1
-    local bulkId=$2
-    local api_key=$3
-    local zone=$4
-    local update_time=$5
+    local templete_path=$1
+    local name=$2
+    local bulkId=$3
+    local api_key=$4
+    local zone=$5
+    local update_time=$6
 
     printf "Configuring the IONOS-DynDNS...\n"
     
-    sudo sed -i "s|^Environment=IONOS_API_NAME=.*|Environment=IONOS_API_NAME=$name|g" "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH"
-    if [ $? -ne 0 ]; then
+    if ! sudo sed -i "s|^Environment=IONOS_API_NAME=.*|Environment=IONOS_API_NAME=$name|g" "$templete_path"; then
         printf "${RED}Error: Setting IONOS_API_NAME${NC}\n"
         return 1
     fi
-    sudo sed -i "s|^Environment=IONOS_API_BULKID=.*|Environment=IONOS_API_BULKID=$bulkId|g" "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH"
-    if [ $? -ne 0 ]; then
+    
+    if ! sudo sed -i "s|^Environment=IONOS_API_BULKID=.*|Environment=IONOS_API_BULKID=$bulkId|g" "$templete_path"; then
         printf "${RED}Error: Setting IONOS_API_BULKID${NC}\n"
         return 1
     fi
-    sudo sed -i "s|^Environment=IONOS_API_KEY=.*|Environment=IONOS_API_KEY=$api_key|g" "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH"
-    if [ $? -ne 0 ]; then
+    
+    if ! sudo sed -i "s|^Environment=IONOS_API_KEY=.*|Environment=IONOS_API_KEY=$api_key|g" "$templete_path"; then
         printf "${RED}Error: Setting IONOS_API_KEY${NC}\n"
         return 1
     fi
-    sudo sed -i "s|^Environment=IONOS_API_ZONE=.*|Environment=IONOS_API_ZONE=$zone|g" "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH"
-    if [ $? -ne 0 ]; then
+
+    if ! sudo sed -i "s|^Environment=IONOS_API_ZONE=.*|Environment=IONOS_API_ZONE=$zone|g" "$templete_path"; then
         printf "${RED}Error: Setting IONOS_API_ZONE${NC}\n"
         return 1
     fi
-    sudo sed -i "s|^Environment=IONOS_API_UPDATE_TIME=.*|Environment=IONOS_API_UPDATE_TIME=$update_time|g" "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH"
-    if [ $? -ne 0 ]; then
+
+    if ! sudo sed -i "s|^Environment=IONOS_API_UPDATE_TIME=.*|Environment=IONOS_API_UPDATE_TIME=$update_time|g" "$templete_path"; then
         printf "${RED}Error: Setting IONOS_API_UPDATE_TIME${NC}\n"
         return 1
     fi
@@ -327,13 +346,14 @@ function configure_service_template() {
 }
 
 function copy_files() {
+    local file="ionos-dyndns.py"
+    local file_path="/usr/local/bin/$file"
+
     printf "Copying IONOS-DynDNS files...\n"
 
-    sudo cp ionos-dyndns.py /usr/local/bin/ionos-dyndns.py
-    if [ $? -ne 0 ]; then
+    if ! sudo cp $file "$file_path"; then
         printf "${YELLOW}No local file found, downloading it from git...${NC}\n"
-        curl -sL https://github.com/manuelziel/dyndns/raw/main/ionos-dyndns.py -o /usr/local/bin/ionos-dyndns.py
-        if [ $? -ne 0 ]; then
+        if ! curl -sL https://github.com/manuelziel/dyndns/raw/main/ionos-dyndns.py -o "$file_path"; then
             printf "${RED}Error: Downloading files from git${NC}\n"
             return 1
         else
@@ -341,8 +361,7 @@ function copy_files() {
         fi
     fi
 
-    sudo chmod +x /usr/local/bin/ionos-dyndns.py
-    if [ $? -ne 0 ]; then
+    if ! sudo chmod +x "$file_path"; then
         printf "${RED}Error: Setting permissions for IONOS-DynDNS files${NC}\n"
         return 1
     fi
@@ -351,53 +370,69 @@ function copy_files() {
 }
 
 function uninstall() {
+    local service_name=$1
+    local templete_path=$2
+
+    local file="ionos-dyndns.py"
+    local file_path="/usr/local/bin/$file"
+
     printf "${GREEN}Uninstalling IONOS-DynDNS...${NC}\n"
     
-    sudo systemctl stop ionos-dyndns.service
-    sudo systemctl disable ionos-dyndns.service
-    sudo rm -f /usr/local/bin/ionos-dyndns.py
-    sudo rm -f "$IONOS_DYNDNS_SERVICE_TEMPLATE_PATH"
+    if ! sudo systemctl stop "$service_name"; then
+        printf "${RED}Error: Stopping IONOS-DynDNS service. Service already stopped?${NC}\n"
+    fi
 
-    printf "${GREEN}IONOS-DynDNS uninstalled successfully${NC}\n"
+    if ! sudo systemctl disable "$service_name"; then
+        printf "${RED}Error: Disabling IONOS-DynDNS service. Service already disabled?${NC}\n"
+    fi
+   
+    if ! sudo rm -f "$file_path"; then
+        printf "${RED}Error: Removing IONOS-DynDNS files. File $file_path already removed?${NC}\n"
+    fi
+
+    if ! sudo rm -f "$templete_path"; then
+        printf "${RED}Error: Removing service template. Path $templete_path already removed?${NC}\n"
+    fi
     return 0
 }
 
 function start_service() {
-    IONOS_DYNDNS_SERVICE_NAME="ionos-dyndns.service"
-    IONOS_DYNDNS_SERVICE_STATUS=$(systemctl is-enabled "$IONOS_DYNDNS_SERVICE_NAME" 2>/dev/null)
+    local service_name=$1
+    local service_status_enabled=$(systemctl is-enabled "$service_name" 2>/dev/null)
+    local service_status_active=$(systemctl is-active "$service_name" 2>/dev/null)
 
-    sudo systemctl daemon-reload
-    if [ $? -ne 0 ]; then
+    if ! sudo systemctl daemon-reload; then
         printf "${RED}Error: Reloading systemd${NC}\n"
         return 1
     fi
 
-    sudo systemctl enable ionos-dyndns.service
-    if [ $? -ne 0 ]; then
-        printf "${RED}Error: Enabling $IONOS_DYNDNS_SERVICE_NAME${NC}\n"
+    if ! sudo systemctl enable ionos-dyndns.service; then
+        printf "${RED}Error: Enabling $service_name${NC}\n"
         return 1
     fi
 
-    if [ "$IONOS_DYNDNS_SERVICE_STATUS" == "enabled" ]; then
-        printf "${GREEN}Service $IONOS_DYNDNS_SERVICE_NAME is already active${NC}\n"
+    if [ "$service_status_active" == "active" ]; then
+        printf "${GREEN}Service $service_name is already active${NC}\n"
         return 0
     else
-        printf "Starting the service $IONOS_DYNDNS_SERVICE_NAME...\n"
-        sudo systemctl start "$IONOS_DYNDNS_SERVICE_NAME"
-        if systemctl is-active --quiet "$IONOS_DYNDNS_SERVICE_NAME"; then
-            printf "${GREEN}Service $IONOS_DYNDNS_SERVICE_NAME started successfully${NC}\n"
+        printf "Starting the service $service_name...\n"
+        if sudo systemctl start "$service_name"; then
+            printf "${GREEN}Service $service_name started successfully${NC}\n"
             return 0
         else
-            printf "${RED}Error: Starting $IONOS_DYNDNS_SERVICE_NAME${NC}\n"
+            printf "${RED}Error: Starting $service_name${NC}\n"
             return 1
         fi
     fi
 }
 
 function main() {
-    ask_for_confirmation
-    ask_install_uninstall
-    exit 0
+    if ! ask_for_confirmation; then
+        exit 1
+    fi
+    if ask_install_uninstall $IONOS_DYNDNS_SERVICE_TEMPLATE_PATH $IONOS_DYNDNS_SERVICE_NAME; then
+        exit 1
+    fi
 }
 
 main

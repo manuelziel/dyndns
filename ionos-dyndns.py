@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 # Author: Manuel Ziel
-# Date: 17-04-2025
-# Version: 1.0.1
+# Date: 27-04-2025
+# Version: 1.0.2
 # License: MIT
 #
 # This programm is free software: you can redistribute it and/or modify
