@@ -1,0 +1,46 @@
+# Requirements for IONOS-DYNDNS
+# Python 3.11+ required for tomllib support
+
+################################################################################
+# CORE DEPENDENCIES (Required for basic functionality)
+################################################################################
+
+# HTTP requests (for IONOS API calls)
+requests>=2.28.0
+
+# Password hashing (for secure credential storage in database)
+bcrypt>=4.0.0
+
+# YAML support (for configuration import/export)
+PyYAML>=6.0
+
+# Encryption support (for API key encryption in database)
+cryptography>=41.0.0
+
+################################################################################
+# OPTIONAL DEPENDENCIES
+################################################################################
+
+# CUSTOMIZATION POINT: Add optional features here
+
+# Systemd journal integration (for persistent logging on Linux systemd systems)
+systemd-python>=235
+
+################################################################################
+# BUILT-IN MODULES (No installation needed - Python Standard Library)
+################################################################################
+
+# - argparse (CLI argument parsing)
+# - json (JSON parsing for import/export)
+# - sqlite3 (database storage)
+# - tomllib (TOML config parsing - Python 3.11+)
+# - logging (application logging)
+# - threading (concurrent operations)
+# - queue (worker thread communication)
+# - time, os, sys, signal (system utilities)
+# - typing (type hints)
+# - contextlib (context managers)
+# - dataclasses (data structures)
+# - enum (enumerations)
+# - getpass (secure password input)
+# - datetime (timestamp handling)

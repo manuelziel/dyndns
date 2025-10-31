@@ -1,0 +1,40 @@
+# Database files
+db.db
+db.db-shm
+db.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Encryption key (NEVER commit!)
+.encryption_key
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.*.swp

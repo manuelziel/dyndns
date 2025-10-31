@@ -1,112 +1,210 @@
 # IONOS DynDNS
 
-**IONOS DynDNS** is a Python script designed to dynamically update DNS records (A and AAAA) for your domain hosted on IONOS. This script is particularly useful for users with dynamic IP addresses, allowing them to automatically synchronize their DNS records with their current public IP address.
+[![Python](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://www.linux.org/)
+
+Automatically update IONOS DNS records (A/AAAA) for domains with dynamic IP addresses. Built for reliability with encrypted API key storage, systemd integration, and interactive CLI configuration.
 
 ---
 
-## **How It Works**
-
-The script:
-- **Detects** your system's current public IPv4 and/or IPv6 address.
-- **Connects** to the IONOS DNS API.
-- **Finds** the appropriate DNS zone for your domain.
-- **Updates** the A and/or AAAA records for the specified hostname (FQDN) with the current IP address.
-- **Deletes** the wrong and unused A and/or AAAA records for the specified hostname (FQDN).
-- **Activates** Dynamic DNS (DynDNS) for your domain if required.
-
----
-
-## **Requirements**
-
-- An **IONOS account** with access to the DNS API.
-- **Python 3.6** or higher.
-- An existing DNS zone for the domain you want to update.
-
----
-
-## **Installation**
-
-### **Automated Installation**
-
-Run the following command to install IONOS DynDNS automatically:
+## Quick Start
 
 ```bash
-curl -sL -o setup.sh https://github.com/manuelziel/dyndns/raw/main/setup.sh && chmod +x setup.sh && sudo ./setup.sh
-```
-### **Manual Installation**
-Clone the repository:
-```bash
+# 1. Clone and install
 git clone https://github.com/manuelziel/dyndns.git
 cd dyndns
+sudo ./setup.sh
+
+# 2. Configure zones and API keys
+ionos-dyndns config
+
+# 3. Start service
+sudo systemctl start ionos-dyndns
+sudo systemctl enable ionos-dyndns
 ```
-Run the script
+---
+
+## Requirements
+
+- IONOS account with DNS API access ([Get API credentials](https://developer.hosting.ionos.de/docs/dns))
+- Python 3.6 or higher
+- Linux system with systemd (for daemon mode)
+- Existing DNS zone for your domain
+
+---
+
+## Installation
+
 ```bash
-sudo bash setup.sh
+# Clone and install
+git clone https://github.com/manuelziel/dyndns.git
+cd dyndns
+sudo ./setup.sh
 ```
-### **Run Manually**
-Run the folling command to run it manually:
+
+**Options**: `--force` (reinstall), `--interactive` (menu mode)
+
+---
+
+## Configuration
+
+### Interactive Setup
+
 ```bash
-python3 ionos-dyndns.py
+ionos-dyndns config
 ```
 
-### **Required Inputs During Installation**
-During the installation or update process, you will be prompted to provide the following information:
-- **Name** (Zugriffsschlüsselname)      eg (name of the key)
-- **BulkId** (Öffentlicher Präfix)      eg (2f8040a4506f40a20bb30be0100a000c)
-- **API-Key** (API-Zugriffsschlüssel)   eg (kaVaReauMaPaSgaflaXnaqea4CGa2OFaaZaiQaTpaUYatzaM2aTaS2rrdr0PcAi4AEJRAx5Awasa0bUD0B-0aA)
-- **Zone** (e.g., example.com)
-- **Update Time** in minutes (default: 5)
+You'll be prompted for:
+- **Zone name**: Your domain (e.g., `example.com`)
+- **API credentials**: IONOS Bulk ID and API Key
+- **DNS records**: A/AAAA records to manage (e.g., `@`, `www`, `mail`)
+
+### Configuration File
+
+Edit `/usr/local/share/ionos-dyndns/config.toml` for advanced settings:
+
+```toml
+[debug]
+level = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+[network]
+ipv4_enabled = true
+ipv6_enabled = true
+
+[daemon]
+check_interval = 300  # Check IP every 5 minutes
+sync_checks = true  # Enable automatic orphan detection (recommended)
+```
+
+**Note**: Zones and API credentials are stored in database, not config file. Use `ionos-dyndns config` to manage.
 
 ---
 
-## **Troubleshooting**
+## Usage
 
-### **Common Issues**
+### Service Management
 
-1. **IPv6 Address Not Found:**
-   - Ensure your system supports IPv6 and has a public IPv6 address.
-   - Test IPv6 connectivity:
-     ```bash
-     ping6 google.com
-     ```
+```bash
+# Start/stop/restart
+sudo systemctl start ionos-dyndns
+sudo systemctl restart ionos-dyndns
 
-2. **Missing Environment Variables:**
-   - Ensure all required environment variables are set in /etc/systemd/system/ionos-dyndns.service:
-     ```bash
-     export IONOS_API_NAME="YOUR_API_NAME"
-     export IONOS_API_BULKID="YOUR_BULKID"
-     export IONOS_API_KEY="YOUR_API_KEY"
-     export IONOS_API_ZONE="YOUR_ZONE"
-     export IONOS_API_UPDATE_TIME=5
-     ```
+# Enable auto-start on boot
+sudo systemctl enable ionos-dyndns
 
-3. **Service Not Starting:**
-   - Check the logs for errors:
-     ```bash
-     sudo journalctl -u ionos-dyndns.service
-     ```
-     or check service:
+# View logs
+sudo journalctl -u ionos-dyndns -f
+```
 
-     ```bash
-     sudo systemctl status ionos-dyndns.service
-     ```
+### Backup/Restore
+
+```bash
+# Export configuration
+ionos-dyndns export --output backup.yaml
+
+# Import configuration
+ionos-dyndns import backup.yaml --overwrite
+```
+
+**Note**: Export creates `~/dyndns-export_YYYYMMDD_HHMMSS.yaml` by default. Records auto-sync on next daemon run after import.
 
 ---
 
-## **Contributing**
+## Sync Operations
 
-We welcome contributions! If you'd like to report an issue, suggest a feature, or contribute code, feel free to open an issue or submit a pull request on GitHub.
+### Automatic Daemon Sync (Recommended)
+
+The daemon automatically handles synchronization when `sync_checks = true` (enabled by default):
+
+- **Orphan Detection**: Detects deleted records → marks as orphaned → recreates automatically
+- **Provider ID Recovery**: Missing provider_record_id → syncs zone → recreates record
+- **Self-Healing**: No manual intervention needed
+
+### Manual Sync Options
+
+**Zone Sync** - Reconcile database with provider:
+```bash
+ionos-dyndns config → "2. Manage records" → "5. Sync records from provider"
+```
+Use when: After import, manual changes at IONOS dashboard, or to verify sync status
+
+**Force Update** - Update all records immediately:
+```bash
+ionos-dyndns config → "4. Force DNS Update"
+```
+Use when: Testing, force IP refresh, or records deleted from provider
 
 ---
 
-## **License**
+## Troubleshooting
 
-This project is licensed under the **MIT License**. See the `LICENSE` file for details.
+### Service Issues
+
+```bash
+# Check status and logs
+sudo systemctl status ionos-dyndns
+sudo journalctl -u ionos-dyndns -n 50
+
+# Restart service
+sudo systemctl restart ionos-dyndns
+```
+
+### Sync Issues
+
+**Records out of sync:** Run `ionos-dyndns config` → "2. Manage records" → "5. Sync records from provider"
+
+**Missing provider IDs:** Auto-fixed by daemon when `sync_checks = true` (default)
+
+**Check sync status:**
+```bash
+sqlite3 /usr/local/share/ionos-dyndns/db.db "SELECT record_name, record_type, sync_status FROM records;"
+```
+
+**Sync status values:** `synced` (up to date), `local_only` (no API), `orphaned` (deleted at provider)
+
+### API/Network Issues
+
+- **Authentication error:** Update credentials via `ionos-dyndns config`
+- **IPv6 disabled:** Edit `config.toml` → `ipv6_enabled = false`
+- **Firewall:** Ensure HTTPS (443) outbound allowed
+
+### Reinstall
+
+```bash
+# Keep config
+sudo ./setup.sh install --force
+
+# Fresh install (removes config)
+sudo ./setup.sh uninstall
+sudo ./setup.sh install
+```
 
 ---
 
-## **Contact**
+## Advanced
 
-- **Author:** Manuel Ziel
-- **GitHub:** [manuelziel](https://github.com/manuelziel)
-- **IONOS DNS API Documentation:** [IONOS Developer Docs](https://developer.hosting.ionos.de/docs/dns)
+- **Encryption**: API keys use Fernet (AES-128 CBC). Key at `/usr/local/share/ionos-dyndns/.encryption_key` (0600 permissions)
+- **Backup encryption key**: `sudo cp /usr/local/share/ionos-dyndns/.encryption_key ~/backup.key`
+- **Export/Import**: Export creates YAML with decrypted API keys for editing
+- **Systemd**: Service runs as root for network access. Logs via `journalctl -u ionos-dyndns`
+
+---
+
+## Contributing
+
+Contributions welcome! Open an issue or submit a pull request on [GitHub](https://github.com/manuelziel/dyndns).
+
+---
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+---
+
+## Contact
+
+**Author**: Manuel Ziel  
+**GitHub**: [manuelziel](https://github.com/manuelziel)  
+**IONOS DNS API**: [Developer Documentation](https://developer.hosting.ionos.de/docs/dns)

@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.3alpha01] - 2025-10-31
+### Added
+- System-wide command `ionos-dyndns` with setup system and backup/restore functionality.
+- CLI commands for configuration management (config, import, export).
+- Auto-create missing DNS records on provider during sync.
+- Enhanced logging with daemon mode support.
+
+### Changed
+- Improved Bash wrapper with modular library system.
+- Python application restructured with better error handling.
+- Configuration via `config.toml`
+
 ## [1.0.2] - 2025-04-27
 ### Added
 - Introduced `CHANGELOG.md` to track changes.

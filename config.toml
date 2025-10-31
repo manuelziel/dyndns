@@ -1,0 +1,83 @@
+# =========================
+# Configuration  
+# =========================
+
+# ----------- DEBUGGING -----------
+[debug]
+# Set to DEBUG, INFO, WARNING, ERROR, CRITICAL or NOTSET
+level = "INFO"
+
+# Enable colored console output
+console_colors = true
+
+# ----------- PROVIDER API -----------
+[provider_api]
+# Provider DNS API base URL (IONOS, Cloudflare, etc.)
+# IONOS: https://api.hosting.ionos.com/dns/v1
+# Cloudflare: https://api.cloudflare.com/client/v4
+base_url = "https://api.hosting.ionos.com/dns/v1"
+
+# API request timeout in seconds
+timeout = 30
+
+# API retry attempts
+retry_attempts = 3
+
+# ----------- NETWORK CONFIGURATION ----------- 
+[network]
+# Enable IPv4 address detection (recommended: true)
+ipv4_enabled = true
+
+# Enable IPv6 address detection (recommended: true)
+ipv6_enabled = true
+
+# IPv4 detection service URL
+ipv4_detection_url = "https://api.ipify.org"
+
+# IPv6 detection service URL
+ipv6_detection_url = "https://api6.ipify.org"
+
+# Network request timeout in seconds
+timeout = 10
+
+# Retry attempts for IP detection
+retry_attempts = 3
+
+# ----------- DNS CONFIGURATION -----------
+[dns]
+# Default Time-To-Live (TTL) for DNS records in seconds
+# TTL determines how long DNS resolvers cache the record before querying again
+# Recommended: 3600 (1 hour) for dynamic DNS with moderate update frequency
+# Lower values (60-300): Faster propagation, higher DNS query load
+# Higher values (7200-86400): Slower propagation, reduced DNS query load
+default_ttl = 3600
+
+# ----------- DAEMON CONFIGURATION -----------  
+[daemon]
+# Run as daemon (background service)
+enabled = true
+
+# Check interval in seconds (how often to check for IP changes)
+check_interval = 300
+
+# Maximum retry attempts on API failures
+max_retries = 3
+
+# Delay between retry attempts in seconds
+retry_delay = 60
+
+# Force update even if IP hasn't changed (for periodic updates)
+force_update_interval = 86400  # 24 hours in seconds
+
+# Enable daemon sync checks (reconciliation of provider_record_id, orphan detection)
+# When enabled, the daemon will verify provider_record_id exists before updates
+# and automatically sync zones if records are missing or orphaned
+sync_checks = true
+
+# ----------- DATABASE -----------
+[database]
+# Path to the SQLite database file
+db_path = "db.db"
+
+# Path to the encryption key file (for API key encryption)
+encryption_key_path = ".encryption_key"
