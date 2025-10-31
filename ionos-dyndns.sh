@@ -18,13 +18,10 @@ readonly _DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # BOOTSTRAP: Detect installation mode and locate libraries
 ################################################################################
 
-# Bootstrap: Minimal config to find library location
-# Strategy: Derive software name from script name (e.g., "ionos-dyndns.sh" -> "ionos-dyndns")
 readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly DERIVED_NAME="${SCRIPT_NAME%.sh}"  # Remove .sh extension
+readonly DERIVED_NAME="${SCRIPT_NAME%.sh}"
 
 if [[ -f "$_DIR/lib/core/config.sh" ]]; then
-    # Development/local mode - load config to get SOFTWARE_DIR_NAME
     source "$_DIR/lib/core/config.sh"
     LIB_BASE_DIR="$_DIR/lib"
 else
@@ -70,25 +67,22 @@ QUIET_MODE=0
 DAEMON_MODE=0
 INTERACTIVE_MODE=0
 ACTION=""
-CLI_ARGS=()  # Array to store CLI command arguments
+CLI_ARGS=()
 
 ################################################################################
 # MAIN SCRIPT LOGIC
 ################################################################################
 
-# Function to exit successfully
 successful_exit() {
     local exit_code="${1:-0}"
     exit "${exit_code}"
 }
 
-# Function to cleanup and exit with error code
 cleanup_and_exit() {
     local exit_code="${1:-1}"
     exit "${exit_code}"
 }
 
-# Function to parse command line arguments
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -179,7 +173,7 @@ parse_arguments() {
                     shift
                     # Store remaining args for Python CLI
                     CLI_ARGS=("$@")
-                    break  # Stop parsing, pass rest to Python
+                    break
                 else
                     print_error "Multiple actions specified: $ACTION and $1"
                     show_help
@@ -192,7 +186,7 @@ parse_arguments() {
                     shift
                     # Store remaining args for Python CLI
                     CLI_ARGS=("$@")
-                    break  # Stop parsing, pass rest to Python
+                    break
                 else
                     print_error "Multiple actions specified: $ACTION and $1"
                     show_help
@@ -264,7 +258,6 @@ parse_arguments() {
             # --daemon without action defaults to 'start --daemon'
             ACTION="start"
         else
-            # No action or flags defaults to interactive
             ACTION="interactive"
         fi
     fi
@@ -272,7 +265,6 @@ parse_arguments() {
 
 # Main function
 main() {
-    # Parse all arguments first
     parse_arguments "$@"
     
     # Define actions that require root privileges
@@ -291,7 +283,6 @@ main() {
             ;;
     esac
     
-    # Check for root privileges if required
     if [[ "$requires_root" == true ]]; then
         if ! check_root; then
             cleanup_and_exit 1
@@ -329,11 +320,9 @@ main() {
             configure_application
             ;;
         import)
-            # Pass to Python CLI with all remaining arguments
             start_python_cli "import" "${CLI_ARGS[@]}"
             ;;
         export)
-            # Pass to Python CLI with all remaining arguments
             start_python_cli "export" "${CLI_ARGS[@]}"
             ;;
         status)
@@ -357,5 +346,4 @@ main() {
     esac
 }
 
-# Run main function with all arguments
 main "$@"

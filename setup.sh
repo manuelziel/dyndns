@@ -14,13 +14,6 @@ set -euo pipefail
 
 readonly _DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load modular components
-# Architecture:
-# - lib/core/     - Shared libraries (setup.sh + start.sh)
-# - lib/setup/    - Setup-only libraries
-# - lib/runtime/  - Runtime-only libraries (start.sh)
-# - lib/modules/  - Optional shared modules
-
 # Load core libraries (shared between setup.sh and start.sh)
 source "${_DIR}/lib/core/colors.sh"
 source "${_DIR}/lib/core/logging.sh"
@@ -37,10 +30,6 @@ if [[ "${ENABLE_PYTHON:-0}" -eq 1 ]]; then
     source "${_DIR}/lib/modules/python.sh"
 fi
 
-# Load other modules as needed
-# source "$_DIR/lib/modules/network.sh"
-# source "$_DIR/lib/modules/database.sh"
-
 # Global flags
 QUIET_MODE=0
 FORCE_MODE=0
@@ -51,19 +40,16 @@ ACTION=""
 # MAIN SCRIPT LOGIC
 ################################################################################
 
-# Function to exit successfully
 successful_exit() {
     local exit_code="${1:-0}"
     exit "${exit_code}"
 }
 
-# Function to cleanup and exit with error code
 cleanup_and_exit() {
     local exit_code="${1:-1}"
     exit "${exit_code}"
 }
 
-# Function to parse command line arguments
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -181,24 +167,19 @@ parse_arguments() {
     fi
 }
 
-# Main function
 main() {
-    # Parse all arguments first
     parse_arguments "$@"
     
-    # Define actions that require root privileges
     local requires_root=false
     case "$ACTION" in
         install|update|reinstall|uninstall)
             requires_root=true
             ;;
         interactive)
-            # Interactive mode requires root for most operations
             requires_root=true
             ;;
     esac
     
-    # Check for root privileges if required (EARLY check)
     if [[ "$requires_root" == true ]]; then
         if ! check_root; then
             cleanup_and_exit 1
@@ -239,5 +220,4 @@ main() {
     esac
 }
 
-# Run main function with all arguments
 main "$@"
