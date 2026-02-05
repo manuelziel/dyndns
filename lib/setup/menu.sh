@@ -1,10 +1,8 @@
 #!/bin/bash
 # lib/setup/menu.sh - Interactive menu functions
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -31,26 +29,29 @@ show_interactive_menu() {
         
         show_status
         
-        # Build menu options based on current state
         options=()
         option_actions=()
         option_num=1
         
         if is_installed; then
-            options+=("${option_num}) Update ${software_name}")
+            options+=("${option_num}) Update")
             option_actions+=("update")
             ((option_num++))
             
-            options+=("${option_num}) Reinstall (current version)")
+            options+=("${option_num}) Reinstall")
             option_actions+=("reinstall")
             ((option_num++))
 
-            options+=("${option_num}) Uninstall ${software_name}")
+            options+=("${option_num}) Uninstall")
             option_actions+=("uninstall")
+            ((option_num++))
+
+            options+=("${option_num}) Purge")
+            option_actions+=("purge")
             ((option_num++))
             
             # Service management options
-            if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[service-name].service" ]]; then
+            if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[SERVICE_NAME]" ]]; then
                 if service_active; then
                     options+=("${option_num}) Stop service")
                     option_actions+=("stop")
@@ -142,6 +143,10 @@ show_interactive_menu() {
                     do_uninstall
                     break
                     ;;
+                "purge")
+                    do_purge
+                    break
+                    ;;
                 "start")
                     if service_start; then
                         print_success "Service started successfully"
@@ -188,8 +193,7 @@ show_interactive_menu() {
                     ;;
             esac
         else
-            print_error "Invalid selection. Please enter a number between 0 and ${max_choice}."
-            read -rp "Press Enter to continue..."
+            print_error "Invalid selection. Enter a number between 0 and ${max_choice}."
         fi
         
         if [[ "${action:-}" != "exit" ]]; then
@@ -214,8 +218,9 @@ show_help() {
     echo "Actions:"
     echo "  install                     Install ${software_name}"
     echo "  update                      Update to latest version"
-    echo "  reinstall                   Reinstall current version"
+    echo "  reinstall                   Reinstall"
     echo "  uninstall                   Uninstall ${software_name}"
+    echo "  purge                       Completely remove including all data"
     echo "  status                      Show installation status"
     echo "  help, -h                    Show this help message"
     echo "  version                     Show version information"
@@ -223,6 +228,7 @@ show_help() {
     echo "Options (can be combined):"
     echo "  --upgrade                   Upgrade to latest version"
     echo "  --remove                    Remove ${software_name}"
+    echo "  --purge                     Remove including all data"
     echo "  --info                      Show installation status"
     echo "  --version, -v               Show version information"
     echo "  --interactive, -i           Force interactive mode (default)"

@@ -1,10 +1,8 @@
 #!/bin/bash
 # lib/core/config.sh - Configuration variables and paths
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -15,8 +13,8 @@
 ################################################################################
 
 readonly AUTHOR="Manuel Ziel"
-readonly VERSION="1.0.3alpha01"
-readonly LAST_MODIFIED="2025-10-29"
+readonly VERSION="1.0.3alpha02"
+readonly LAST_MODIFIED="2026-02-05"
 readonly SOFTWARE_NAME="IONOS-DYNDNS"
 readonly SOFTWARE_DESCRIPTION="Dynamic DNS Client for IONOS"
 
@@ -36,7 +34,7 @@ readonly LIB_DIR="/usr/local/lib/${SOFTWARE_DIR_NAME}"              # Software-s
 readonly SHARE_DIR="/usr/local/share/${SOFTWARE_DIR_NAME}"          # Software-specific share directory
 export SHARE_DIR                                                    # Export for modules that need it
 readonly ETC_DIR="/etc/${SOFTWARE_DIR_NAME}"                        # Software-specific config directory
-readonly VAR_DIR="/var/${SOFTWARE_DIR_NAME}"                        # System var directory
+readonly VAR_LIB_DIR="/var/lib/${SOFTWARE_DIR_NAME}"                # Application data directory
 
 # Runtime file paths
 readonly PID_FILE="/run/${SOFTWARE_DIR_NAME}.pid"
@@ -81,17 +79,18 @@ readonly INSTALL_SOURCES=(
 )
 
 # Service configuration
-readonly CREATE_SERVICE=true                            # Set to false to disable service creation
-readonly SERVICE_NAME="${SOFTWARE_DIR_NAME}.service"    # Service file name
-readonly SERVICE_EXEC_START="${BIN_SYMLINK} start --daemon"  # Command to start service (use symlink!)
-readonly SERVICE_EXEC_STOP="${BIN_SYMLINK} stop"        # Command to stop service (use symlink!)
-readonly SERVICE_TYPE="simple"                          # simple, forking, oneshot, notify, idle
-readonly SERVICE_USER="root"                            # User to run service as (empty = root)
-readonly SERVICE_RESTART="on-failure"                   # no, on-success, on-failure, on-abnormal, on-abort, always
-readonly SERVICE_RESTART_SEC="10"                       # Seconds to wait before restart
-readonly SERVICE_AFTER="network-online.target"          # Dependencies (space-separated)
-readonly SERVICE_WANTS="network-online.target"          # Optional dependencies (space-separated) 
-readonly SERVICE_WANTED_BY="multi-user.target"          # Install target
+readonly CREATE_SERVICE=true                                    # Set to false to disable service creation
+readonly SERVICE_NAME="${SOFTWARE_DIR_NAME}.service"            # Service file name
+readonly SERVICE_EXEC_START="${BIN_SYMLINK} start --daemon"     # Command to start service (use symlink!)
+readonly SERVICE_EXEC_STOP="${BIN_SYMLINK} stop"                # Command to stop service (use symlink!)
+readonly SERVICE_TYPE="forking"                                 # forking (bash forks python, exits, python keeps running)
+readonly SERVICE_PIDFILE="${PID_FILE}"                          # PID file for forking service type
+readonly SERVICE_USER="root"                                    # User to run service as (empty = root)
+readonly SERVICE_RESTART="on-failure"                           # no, on-success, on-failure, on-abnormal, on-abort, always
+readonly SERVICE_RESTART_SEC="10"                               # Seconds to wait before restart
+readonly SERVICE_AFTER="network-online.target"                  # Dependencies (space-separated)
+readonly SERVICE_WANTS="network-online.target"                  # Optional dependencies (space-separated) 
+readonly SERVICE_WANTED_BY="multi-user.target"                  # Install target
 
 # Examples for different service types:
 # Web service with database dependency:

@@ -1,9 +1,7 @@
 #!/bin/bash
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -34,6 +32,7 @@ fi
 QUIET_MODE=0
 FORCE_MODE=0
 SKIP_DEPENDENCIES=0
+PURGE_MODE=0
 ACTION=""
 
 ################################################################################
@@ -53,7 +52,6 @@ cleanup_and_exit() {
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-            # Actions with normalization
             install)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="install"
@@ -87,6 +85,16 @@ parse_arguments() {
             uninstall|--remove)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="uninstall"
+                    shift
+                else
+                    print_error "Multiple actions specified: $ACTION and $1"
+                    show_help
+                    cleanup_and_exit 1
+                fi
+                ;;
+            purge)
+                if [[ -z "${ACTION:-}" ]]; then
+                    ACTION="purge"
                     shift
                 else
                     print_error "Multiple actions specified: $ACTION and $1"
@@ -146,6 +154,10 @@ parse_arguments() {
                 DEBUG_MODE=1
                 shift
                 ;;
+            --purge)
+                PURGE_MODE=1
+                shift
+                ;;
                 
             # Error handling
             -*)
@@ -172,7 +184,7 @@ main() {
     
     local requires_root=false
     case "$ACTION" in
-        install|update|reinstall|uninstall)
+        install|update|reinstall|uninstall|purge)
             requires_root=true
             ;;
         interactive)
@@ -186,7 +198,6 @@ main() {
         fi
     fi
     
-    # Execute based on action
     case "${ACTION}" in
         install)
             do_install
@@ -198,7 +209,14 @@ main() {
             do_reinstall
             ;;
         uninstall)
-            do_uninstall
+            if [[ "${PURGE_MODE:-0}" -eq 1 ]]; then
+                do_purge
+            else
+                do_uninstall
+            fi
+            ;;
+        purge)
+            do_purge
             ;;
         status)
             show_status

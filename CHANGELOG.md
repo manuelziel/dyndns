@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.3alpha02] - 2026-02-05
+### Added
+- `purge` command and `--purge` flag for complete removal including data directory
+- Zone ID auto-fetch from provider API when adding new zones
+- DynDNS record creation wizard after zone setup (Standard setup with @/www or Root domain only)
+
+### Changed
+- Data directory path from `/var/` to `/var/lib/`
+- Restructured Python modules into `src/core/` and `src/utils/` subdirectories
+- Refactored daemon mode handling: Bash wrapper controls daemon mode via DAEMON_MODE environment variable
+- Python application reads DAEMON_MODE from environment instead of CLI argument
+- Updated all docstrings to Google Style format
+
+### Fixed
+- Inconsistent configuration display between menu and application views
+- PID file handling causing daemon start failures
+- Database write access in systemd service (ReadWritePaths)
+- Stop application handling
+- Removed install-dependencies from runtime
+- Process termination, PID file handling
+
 ## [1.0.3alpha01] - 2025-10-31
 ### Added
 - System-wide command `ionos-dyndns` with setup system and backup/restore functionality.

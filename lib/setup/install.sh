@@ -1,10 +1,8 @@
 #!/bin/bash
 # lib/setup/install.sh - Installation and management functions
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -18,7 +16,7 @@ do_install() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local force_mode="${FORCE_MODE:-0}"
     local create_service_flag="${CREATE_SERVICE:-false}"
-    local service_name="${SERVICE_NAME:-"[service-name].service"}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
 
     print_section "Installing ${software_name}"
 
@@ -32,10 +30,14 @@ do_install() {
         return 1
     fi
     
-    backup_installation || true  # Don't fail if backup fails
+    backup_installation || true
     
     if ! install_files; then
         return 1
+    fi
+
+    if ! create_data_directory; then
+        print_warning "Failed to create data directory, continuing..."
     fi
 
     if [[ "${create_service_flag}" == "true" ]]; then
@@ -58,16 +60,11 @@ do_install() {
                 print_info "Check status with: sudo systemctl status ${service_name}"
             fi
         else 
-            print_warning "Service creation failed, but continuing installation"
+            print_warning "Service creation failed, continuing installation"
         fi
     fi
 
     print_success "${software_name} installed successfully!"
-
-    echo ""
-    print_info "Next steps:"
-    echo "  • Configure: $0 --configure"
-    echo "  • View status: $0 --status"
     
     return 0
 }
@@ -76,7 +73,7 @@ do_update() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local current_version="$(get_installed_version)"
     local version="${VERSION:-"[VERSION]"}"
-    local service_name="${SERVICE_NAME:-"[service-name].service"}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
     local old_force="${FORCE_MODE:-0}"
     local was_running="false"
     local enable_python="${ENABLE_PYTHON:-0}"
@@ -98,7 +95,7 @@ do_update() {
         print_warning "Backup failed, update continues"
     fi
 
-    if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[service-name].service" ]] && service_active; then
+    if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[SERVICE_NAME]" ]] && service_active; then
         was_running=true
         print_info "Stopping service for update..."
 
@@ -107,20 +104,19 @@ do_update() {
         else
             print_warning "Failed to stop service, continuing anyway"
         fi
-    elif [[ -n "${service_name}" ]] && [[ "${service_name}" != "[service-name].service" ]]; then
+    elif [[ -n "${service_name}" ]] && [[ "${service_name}" != "[SERVICE_NAME]" ]]; then
         print_info "Service is not running, no need to stop"
     fi
 
     if [[ "${enable_python}" -eq 1 ]]; then
         if ! setup_python_environment; then
-            print_warning "Failed to update Python environment, but continuing..."
+            print_warning "Failed to update Python environment, continuing..."
         fi
     fi
 
-    # Optional dependencies. Create your own setup function in lib/optional.sh
     if [[ "${enable_optional_dependency}" -eq 1 ]]; then
         if ! setup_optional_function; then
-            print_error "Failed to setup or install optional dependencies, but continuing..."
+            print_error "Failed to setup or install optional dependencies, continuing..."
         fi
     fi
     
@@ -143,7 +139,6 @@ do_update() {
         print_info "You may need to restore from backup and restart service manually"
     fi
     
-    # Restore original FORCE_MODE
     FORCE_MODE="${old_force}"
 
     if [[ "${install_result}" -eq 0 ]]; then
@@ -156,8 +151,6 @@ do_update() {
 
 do_reinstall() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-
-    #print_section "Reinstalling ${software_name}"
 
     if FORCE_MODE=1 do_uninstall && FORCE_MODE=1 do_install; then
         print_success "Reinstallation completed successfully"
@@ -173,9 +166,9 @@ do_uninstall() {
     local force_mode="${FORCE_MODE:-0}"
     local service_path="${SERVICE_PATH:-"[SERVICE_PATH]"}"
     local install_path="${INSTALL_PATH:-"[INSTALL_PATH]"}"
-    local bin_dir="${BIN_DIR}"
-    local share_dir="${SHARE_DIR}"
-    local bin_symlink="${BIN_SYMLINK}"
+    local bin_dir="${BIN_DIR:-"[BIN_DIR]"}"
+    local share_dir="${SHARE_DIR:-"[SHARE_DIR]"}"
+    local bin_symlink="${BIN_SYMLINK:-"[BIN_SYMLINK]"}"
 
     print_section "Uninstalling ${software_name}"
 
@@ -194,7 +187,6 @@ do_uninstall() {
         fi
     fi
     
-    # Stop and remove service first
     if service_exists; then
         print_info "Stopping and removing service..."
 
@@ -204,32 +196,67 @@ do_uninstall() {
                 print_success "Service file removed"
                 service_daemon_reload
             else
-                print_warning "Failed to remove service file, but continuing..."
+                print_warning "Failed to remove service file, continuing..."
             fi
         else
-            print_warning "Failed to stop/disable service, but continuing..."
+            print_warning "Failed to stop/disable service, continuing..."
         fi
     fi
 
-    # Remove symlink
     if [[ -L "${bin_symlink}" ]]; then
         rm -f "${bin_symlink}"
         print_success "Symlink removed: ${bin_symlink}"
     fi
 
-    # Remove entire bin directory
     if [[ -d "${bin_dir}" ]]; then
         rm -rf "${bin_dir}"
         print_success "Binary directory removed: ${bin_dir}"
     fi
 
-    # Remove entire share directory  
     if [[ -d "${share_dir}" ]]; then
         rm -rf "${share_dir}"
         print_success "Share directory removed: ${share_dir}"
     fi
 
     print_success "${software_name} uninstalled completely!"
+    
+    if [[ "${PURGE_MODE:-0}" -eq 0 ]]; then
+        print_info "Note: Data directory ${VAR_LIB_DIR:-/var/lib/ionos-dyndns} was preserved"
+        print_info "Use 'purge' or 'uninstall --purge' to remove all data"
+    fi
+    return 0
+}
+
+do_purge() {
+    local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+    local force_mode="${FORCE_MODE:-0}"
+    local var_lib_dir="${VAR_LIB_DIR:-"/var/lib/[VAR_LIB_DIR]"}"
+
+    print_section "Purging ${software_name}"
+    print_warning "This will remove ALL data"
+    print_warning "Data directory: ${var_lib_dir}"
+    
+    if [[ "${force_mode}" -eq 0 ]]; then
+        echo ""
+        read -rp "Are you ABSOLUTELY sure? This cannot be undone! (y/n): " -n 1
+        echo ""
+        if [[ ! "${REPLY}" =~ ^[Yy]$ ]]; then
+            print_info "Purge cancelled"
+            return 0
+        fi
+    fi
+
+    FORCE_MODE=1 PURGE_MODE=1 do_uninstall
+
+    if [[ -d "${var_lib_dir}" ]]; then
+        print_info "Removing data directory: ${var_lib_dir}"
+        rm -rf "${var_lib_dir}"
+        print_success "Data directory removed: ${var_lib_dir}"
+    else
+        print_info "Data directory not found: ${var_lib_dir}"
+    fi
+
+    print_success "${software_name} purged completely! All data removed."
     return 0
 }
 
@@ -259,6 +286,27 @@ do_configure() {
 ################################################################################
 # 2. HELPER FUNCTIONS - Setup and Utilities  
 ################################################################################
+
+create_data_directory() {
+    local var_lib_dir="${VAR_LIB_DIR:-"[VAR_LIB_DIR]"}"
+    
+    print_info "Creating data directory: ${var_lib_dir}"
+    
+    if [[ -d "${var_lib_dir}" ]]; then
+        print_info "Data directory already exists"
+        return 0
+    fi
+    
+    if mkdir -p "${var_lib_dir}" 2>/dev/null; then
+        chmod 755 "${var_lib_dir}" 2>/dev/null || true
+        print_success "Created data directory: ${var_lib_dir}"
+        return 0
+    else
+        print_error "Failed to create data directory: ${var_lib_dir}"
+        print_info "You may need to create it manually: sudo mkdir -p ${var_lib_dir}"
+        return 1
+    fi
+}
 
 setup_directories() {
     local config_dir="${CONFIG_DIR:-"[CONFIG_DIR]"}"
@@ -324,7 +372,7 @@ install_files() {
         done
     else
         print_warning "No INSTALL_SOURCES configured - nothing to install"
-        print_info "Please configure INSTALL_SOURCES array in config.sh"
+        print_info "Configure INSTALL_SOURCES array in config.sh"
     fi
     
     if [[ $install_count -gt 0 ]]; then
@@ -345,13 +393,12 @@ install_files() {
 }
 
 install_single_item() {
-    local _dir="${_DIR}"
+    local _dir="${_DIR:-"_DIR"}"
     local source_path="$1"
     local dest_path="$2" 
     local item_type="$3"
     local full_source="${_dir}/${source_path}"
     
-    # Special handling for symlinks - source_path is the target, not relative to _dir
     if [[ "$item_type" == "symlink" ]]; then
         full_source="$source_path"
         
@@ -360,7 +407,6 @@ install_single_item() {
             return 1
         }
         
-        # Create symlink
         if ln -sf "$full_source" "$dest_path"; then
             print_success "Created symlink: $dest_path -> $full_source"
             return 0
@@ -370,19 +416,16 @@ install_single_item() {
         fi
     fi
     
-    # Check if source exists (for non-symlink types)
     if [[ ! -e "$full_source" ]]; then
         print_error "Source not found: $full_source"
         return 1
     fi
     
-    # Create destination directory
     mkdir -p "$(dirname "$dest_path")" || {
         print_error "Failed to create directory for: $dest_path"
         return 1
     }
     
-    # Copy based on type
     case "$item_type" in
         "file"|"executable")
             if cp "$full_source" "$dest_path"; then
@@ -411,7 +454,7 @@ install_single_item() {
 }
 
 create_service() {
-    local service_name="${SERVICE_NAME:-"[service-name].service"}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
     local service_content
     local service_after="${SERVICE_AFTER:-network.target}"
     local service_wants="${SERVICE_WANTS:-}"
@@ -424,8 +467,8 @@ create_service() {
     local service_wanted_by="${SERVICE_WANTED_BY:-multi-user.target}"
     local service_path="${SERVICE_PATH:-/etc/systemd/system/${service_name}}"
 
-    if [[ -z "${service_name}" ]] || [[ "${service_name}" == "[service-name].service" ]]; then
-        print_info "No service configuration needed (SERVICE_NAME not configured)"
+    if [[ -z "${service_name}" ]] || [[ "${service_name}" == "[SERVICE_NAME]" ]]; then
+        print_info "No service configuration needed (${service_name} not configured)"
         return 0
     fi
 
@@ -444,8 +487,13 @@ After=${service_after}"
 Type=${service_type}
 User=${service_user}
 Group=${service_user}
-WorkingDirectory=${SHARE_DIR}
-ExecStart=${service_exec_start}
+WorkingDirectory=${SHARE_DIR}"
+
+    if [[ -n "${SERVICE_PIDFILE:-}" ]]; then
+        service_content+="\nPIDFile=${SERVICE_PIDFILE}"
+    fi
+
+    service_content+="\nExecStart=${service_exec_start}
 ExecStop=${service_exec_stop}"
 
     if [[ "${service_restart}" != "no" ]]; then
@@ -459,13 +507,13 @@ ExecStop=${service_exec_stop}"
     service_content+="\nStandardError=journal"
     service_content+="\nSyslogIdentifier=${SOFTWARE_DIR_NAME}"
     
-    # Security hardening
     service_content+="\n\n# Security hardening"
     service_content+="\nNoNewPrivileges=true"
     service_content+="\nPrivateTmp=true"
     service_content+="\nProtectSystem=strict"
     service_content+="\nProtectHome=true"
     service_content+="\nReadWritePaths=${SHARE_DIR}"
+    service_content+="\nReadWritePaths=${VAR_LIB_DIR}"
     service_content+="\nReadWritePaths=/run"
     
     service_content+="\n
@@ -481,7 +529,7 @@ WantedBy=${service_wanted_by}"
             print_info "  • User: ${service_user:-root}"
             print_info "  • Restart: ${service_restart}"
         else
-            print_warning "Service created, but failed to reload systemd daemon"
+            print_warning "Service created, failed to reload systemd daemon"
             return 1
         fi
         return 0

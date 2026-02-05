@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""
-Provider-DYNDNS - Dynamic DNS Client for DNS Providers
+"""IONOS DynDNS - Main entry point for Dynamic DNS Client.
 
-Integrates with bash setup/runtime system for consistent logging,
-configuration management, and daemon operations.
+This is the main entry point for the IONOS DynDNS application. It handles
+argument parsing, configuration loading, and dispatches to appropriate
+command handlers or starts the daemon.
 
-Created: 2025-10-27
+Typical usage:
+    $ ./ionos-dyndns.py                    # Single update run
+    $ ./ionos-dyndns.py config             # Open configuration menu
+    $ ./ionos-dyndns.py import config.yaml # Import configuration
+    $ ./ionos-dyndns.py export --format json
+
+Note:
+    Use bash wrapper (ionos-dyndns) for daemon mode:
+    $ ionos-dyndns start --daemon
+
 Author: Manuel Ziel
 License: MIT
-
-This program is free software: you can redistribute it and/or modify
 """
 
 ################################################################################
@@ -21,38 +28,51 @@ import sys
 import os
 import argparse
 import logging
+import signal
+from typing import Optional
 
 # Add src directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
 
-from logger import LoggerManager
-from config import ConfigManager
-from application import Application
-from daemon import DaemonManager
-from cli import ConfigMenu, ConfigImporter, ConfigExporter
+# Local imports from src
 from src import __version__, __author__, __software_name__
+from src.core import ConfigManager, LoggerManager
+from src.application import Application
+from src.daemon import DaemonManager
+from src.cli import ConfigMenu, ConfigImporter, ConfigExporter
 
 ################################################################################
 # ARGUMENT PARSING - Command-Line Interface
 ################################################################################
 
 def parse_arguments() -> argparse.Namespace:
-    """Parse CLI arguments with subcommands (config, import, export, daemon)."""
+    """Parse command-line arguments.
+
+    Supports multiple subcommands:
+        config: Interactive CLI configuration menu.
+        import: Import configuration from YAML/JSON file.
+        export: Export current configuration to file.
+        (no command): Start application (default single run).
+
+    Returns:
+        Parsed command-line arguments namespace.
+    """
     parser = argparse.ArgumentParser(
         description='Provider DynDNS - Dynamic DNS Client for DNS Providers',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s                          # Start DynDNS (single run)
-  %(prog)s --daemon                 # Continuous monitoring mode
   %(prog)s config                   # Interactive configuration
   %(prog)s import config.yaml       # Import configuration
   %(prog)s export --output backup.yaml  # Export configuration
+
+Note: Use bash wrapper (ionos-dyndns) for daemon mode:
+  ionos-dyndns start --daemon       # Continuous monitoring via systemd
         """
     )
     
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
-    parser.add_argument('--daemon', '-d', action='store_true', help='Run in daemon mode (continuous monitoring)')
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
@@ -73,7 +93,16 @@ Examples:
 ################################################################################
 
 def handle_cli_command(args: argparse.Namespace, config: ConfigManager, logger: logging.Logger) -> int:
-    """Handle CLI subcommands (config, import, export). Returns: Exit code (0=success)."""
+    """Handle CLI subcommands (config, import, export).
+
+    Args:
+        args: Parsed command-line arguments.
+        config: Configuration manager instance.
+        logger: Logger instance.
+
+    Returns:
+        Exit code (0 for success, 1 for error).
+    """
     if args.command == 'config':
         logger.debug("Starting interactive configuration menu...")
         try:
@@ -111,11 +140,48 @@ def handle_cli_command(args: argparse.Namespace, config: ConfigManager, logger: 
     return 0
 
 ################################################################################
-# MAIN APPLICATION - Entry Point and Initialization
+# SIGNAL HANDLING
+################################################################################
+
+def shutdown_handler(signum, frame):
+    """Signal handler for graceful shutdown.
+
+    Handles SIGTERM and SIGINT signals for graceful application shutdown.
+    This is a fallback for direct Python execution without daemon mode.
+
+    Args:
+        signum: Signal number received.
+        frame: Current stack frame.
+
+    Note:
+        DaemonManager in src/daemon.py handles signals in daemon mode.
+    """
+    try:
+        logger = logging.getLogger(__software_name__)
+        if logger.hasHandlers():
+            logger.info(f"Received signal {signum}, shutting down gracefully...")
+    except Exception:
+        pass
+    
+    sys.exit(0)
+
+################################################################################
+# MAIN APPLICATION
 ################################################################################
 
 def main() -> int:
-    """Main entry point. Initialize config/logger, handle CLI commands, start daemon or single-run mode. Returns: Exit code (0=success)."""
+    """Main application entry point.
+
+    Initializes configuration, logging, and dispatches to command handlers
+    or starts the DynDNS application in single-run or daemon mode.
+
+    Returns:
+        Exit code (0 for success, non-zero for errors).
+
+    Note:
+        Daemon mode is controlled by DAEMON_MODE environment variable,
+        which is set by the bash wrapper (ionos-dyndns.sh).
+    """
     version = __version__
     software_name = __software_name__
 
@@ -126,27 +192,35 @@ def main() -> int:
     config = ConfigManager(current_dir, config_path)
     
     log_level = getattr(logging, config.log_level, logging.INFO)
-    daemon_mode = args.daemon
+    
+    # Check environment variable for daemon mode (set by bash wrapper)
+    daemon_mode = os.environ.get('DAEMON_MODE', '0') == '1'
     logger = LoggerManager.get_logger(software_name, level=log_level, daemon_mode=daemon_mode)
     
     if args.command:
         return handle_cli_command(args, config, logger)
     
-    run_mode = "daemon" if args.daemon else "once"
+    run_mode = "daemon" if daemon_mode else "once"
     
     logger.info(f"{software_name} starting... (mode: {run_mode})")
     logger.info(f"Version: {version}")
     logger.info(f"Log level: {config.log_level}")
+    
+    # Register signal handlers for graceful shutdown (fallback for non-daemon mode)
+    # BEST PRACTICE: Always handle SIGTERM/SIGINT, never use SIG_IGN
+    # Note: DaemonManager registers its own handlers in daemon mode
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
     
     logger.debug("Initializing application services...")
     app = Application(config, logger)
     
     logger.debug("Setting up daemon manager...")
     daemon = DaemonManager(app, config, logger)
-    if run_mode == "daemon":
+    if daemon_mode:
         logger.debug("Starting daemon mode (continuous monitoring)...")
-        daemon.start()
-        logger.debug("DynDNS daemon initialized and running")
+        daemon.run_forever()
+        logger.debug("DynDNS daemon shutdown complete")
     else:
         logger.debug("Starting single-run mode...")
         

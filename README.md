@@ -1,6 +1,6 @@
 # IONOS DynDNS
 
-[![Python](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://www.linux.org/)
 
@@ -28,7 +28,7 @@ sudo systemctl enable ionos-dyndns
 ## Requirements
 
 - IONOS account with DNS API access ([Get API credentials](https://developer.hosting.ionos.de/docs/dns))
-- Python 3.6 or higher
+- Python 3.11 or higher
 - Linux system with systemd (for daemon mode)
 - Existing DNS zone for your domain
 
@@ -58,7 +58,7 @@ ionos-dyndns config
 You'll be prompted for:
 - **Zone name**: Your domain (e.g., `example.com`)
 - **API credentials**: IONOS Bulk ID and API Key
-- **DNS records**: A/AAAA records to manage (e.g., `@`, `www`, `mail`)
+- **DNS records**: A/AAAA records to manage (e.g., `@`, `www`)
 
 ### Configuration File
 
@@ -125,13 +125,13 @@ The daemon automatically handles synchronization when `sync_checks = true` (enab
 
 **Zone Sync** - Reconcile database with provider:
 ```bash
-ionos-dyndns config → "2. Manage records" → "5. Sync records from provider"
+ionos-dyndns config -> "2. Manage records" -> "5. Sync records from provider"
 ```
 Use when: After import, manual changes at IONOS dashboard, or to verify sync status
 
 **Force Update** - Update all records immediately:
 ```bash
-ionos-dyndns config → "4. Force DNS Update"
+ionos-dyndns config -> "4. Force DNS Update"
 ```
 Use when: Testing, force IP refresh, or records deleted from provider
 
@@ -150,42 +150,34 @@ sudo journalctl -u ionos-dyndns -n 50
 sudo systemctl restart ionos-dyndns
 ```
 
-### Sync Issues
-
-**Records out of sync:** Run `ionos-dyndns config` → "2. Manage records" → "5. Sync records from provider"
-
-**Missing provider IDs:** Auto-fixed by daemon when `sync_checks = true` (default)
-
-**Check sync status:**
-```bash
-sqlite3 /usr/local/share/ionos-dyndns/db.db "SELECT record_name, record_type, sync_status FROM records;"
-```
-
-**Sync status values:** `synced` (up to date), `local_only` (no API), `orphaned` (deleted at provider)
-
 ### API/Network Issues
 
 - **Authentication error:** Update credentials via `ionos-dyndns config`
-- **IPv6 disabled:** Edit `config.toml` → `ipv6_enabled = false`
+- **IPv6 disabled:** Edit `config.toml` -> `ipv6_enabled = false`
 - **Firewall:** Ensure HTTPS (443) outbound allowed
 
-### Reinstall
+### Reinstall / Uninstall
 
 ```bash
 # Keep config
 sudo ./setup.sh install --force
 
-# Fresh install (removes config)
+# Fresh install (removes config but keeps data)
 sudo ./setup.sh uninstall
 sudo ./setup.sh install
+
+# Complete removal including all data
+sudo ./setup.sh purge
+# or
+sudo ./setup.sh uninstall --purge
 ```
 
 ---
 
 ## Advanced
 
-- **Encryption**: API keys use Fernet (AES-128 CBC). Key at `/usr/local/share/ionos-dyndns/.encryption_key` (0600 permissions)
-- **Backup encryption key**: `sudo cp /usr/local/share/ionos-dyndns/.encryption_key ~/backup.key`
+- **Encryption**: API keys use Fernet (AES-128-CBC with HMAC-SHA256). Key at `/var/lib/ionos-dyndns/.encryption_key` (0600 permissions)
+- **Backup encryption key**: `sudo cp /var/lib/ionos-dyndns/.encryption_key ~/backup.key`
 - **Export/Import**: Export creates YAML with decrypted API keys for editing
 - **Systemd**: Service runs as root for network access. Logs via `journalctl -u ionos-dyndns`
 

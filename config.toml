@@ -77,7 +77,7 @@ sync_checks = true
 # ----------- DATABASE -----------
 [database]
 # Path to the SQLite database file
-db_path = "db.db"
+db_path = "ionos-dyndns.db"
 
 # Path to the encryption key file (for API key encryption)
 encryption_key_path = ".encryption_key"

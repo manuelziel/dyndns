@@ -34,6 +34,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Help Folder
+_help/
+
 # Temporary files
 *.tmp
 *.temp

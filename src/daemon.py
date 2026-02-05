@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""
-Daemon Management Module
+"""Daemon management module for background process operation.
 
-Contains daemon functionality for background operation with proper
-signal handling, process management, and error recovery.
+This module provides the DaemonManager class for running applications as
+background services with proper signal handling, periodic execution,
+and graceful shutdown support.
 
-Created: 2025-10-27
+Typical usage:
+    >>> daemon = DaemonManager(app, config, logger)
+    >>> daemon.start()  # Background thread
+    >>> # Or:
+    >>> daemon.run_forever()  # Foreground blocking
+
 Author: Manuel Ziel
 License: MIT
-
-This program is free software: you can redistribute it and/or modify
 """
 
 ################################################################################
@@ -17,26 +20,39 @@ This program is free software: you can redistribute it and/or modify
 ################################################################################
 
 # Standard library imports
-import os
 import signal
-import sys
 import threading
 import time
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Dict, Any
 
 ################################################################################
 # DAEMON MANAGER CLASS - Background Process Management
 ################################################################################
 
 class DaemonManager:
-    """Daemon manager for background operation with signal handling and graceful shutdown."""
-    
-    def __init__(self, application: Any, config: Any, logger: Any, cycle_interval: int = 60) -> None:
-        """Initialize daemon manager."""
+    """Daemon manager for background process operation.
+
+    Handles signal management (SIGTERM, SIGINT, SIGHUP), periodic execution
+    of application cycles, and graceful shutdown with timeout.
+
+    Attributes:
+        application: Application instance with run_cycle() method.
+        config: Configuration object.
+        logger: Logger instance.
+        running: Whether daemon is currently running.
+    """
+
+    def __init__(self, application: Any, config: Any, logger: Any) -> None:
+        """Initialize daemon manager.
+
+        Args:
+            application: Application instance with run_cycle() method.
+            config: Configuration object with daemon settings.
+            logger: Logger instance for daemon logging.
+        """
         self.application = application
         self.config = config
         self.logger = logger
-        self.cycle_interval = cycle_interval
         
         self.running = False
         self._stop_event = threading.Event()
@@ -50,7 +66,11 @@ class DaemonManager:
     ################################################################################
 
     def start(self) -> bool:
-        """Start the daemon in a background thread."""
+        """Start the daemon in a background thread.
+
+        Returns:
+            True if started successfully, False if already running.
+        """
         if self.running:
             self.logger.warning("Daemon is already running")
             return False
@@ -61,7 +81,6 @@ class DaemonManager:
             self.running = True
             self._stop_event.clear()
             
-            # Start daemon thread
             self._daemon_thread = threading.Thread(
                 target=self._daemon_loop,
                 name="DaemonLoop",
@@ -78,7 +97,13 @@ class DaemonManager:
             return False
 
     def stop(self) -> bool:
-        """Stop the daemon gracefully."""
+        """Stop the daemon gracefully.
+
+        Waits up to 30 seconds for the daemon thread to finish.
+
+        Returns:
+            True if stopped successfully, False if not running or timeout.
+        """
         if not self.running:
             self.logger.warning("Daemon is not running")
             return False
@@ -111,7 +136,14 @@ class DaemonManager:
             return False
 
     def run_forever(self) -> None:
-        """Run daemon in foreground (blocking call)."""
+        """Run daemon in foreground mode as a blocking call.
+
+        Starts the daemon loop in the current thread instead of spawning
+        a background thread. Handles keyboard interrupts gracefully.
+
+        Raises:
+            Exception: Re-raises any exception from the daemon loop.
+        """
         self.logger.debug("Starting daemon in foreground mode...")
         
         try:
@@ -133,16 +165,26 @@ class DaemonManager:
     ################################################################################
 
     def is_running(self) -> bool:
-        """Check if daemon is currently running."""
+        """Check if the daemon is currently running.
+
+        Returns:
+            True if the daemon is active and no stop has been requested,
+            False otherwise.
+        """
         return self.running and not self._stop_event.is_set()
 
     def get_status(self) -> Dict[str, Any]:
-        """Get current daemon status information."""
+        """Get current daemon status information.
+
+        Returns:
+            Dictionary containing running state, stop request status,
+            thread alive status, cycle interval, and application state.
+        """
         return {
             'running': self.running,
             'stop_requested': self._stop_event.is_set(),
             'thread_alive': self._daemon_thread.is_alive() if self._daemon_thread else False,
-            'cycle_interval': self.cycle_interval,
+            'cycle_interval': self.config.daemon_check_interval,
             'application_running': self.application.is_running() if hasattr(self.application, 'is_running') else None
         }
 
@@ -151,7 +193,11 @@ class DaemonManager:
     ################################################################################
 
     def _setup_signal_handlers(self) -> None:
-        """Setup signal handlers for graceful shutdown."""
+        """Setup Unix signal handlers for graceful shutdown and reload.
+
+        Registers handlers for SIGTERM, SIGINT (graceful shutdown) and
+        SIGHUP (configuration reload).
+        """
         def signal_handler(signum: int, frame: Any) -> None:
             self.logger.info(f"Received signal {signum}, initiating shutdown...")
             self.stop()
@@ -172,8 +218,12 @@ class DaemonManager:
         signal.signal(signal.SIGHUP, reload_handler)
 
     def _daemon_loop(self) -> None:
-        """Main daemon loop that executes application cycles at regular intervals."""
-        self.logger.debug(f"Daemon loop started (interval: {self.cycle_interval}s)")
+        """Main daemon loop that executes application cycles at intervals.
+
+        Runs the application's run_cycle method at regular intervals defined
+        by the configuration. Handles timing to maintain consistent intervals.
+        """
+        self.logger.debug(f"Daemon loop started (interval: {self.config.daemon_check_interval}s)")
         
         while self.running and not self._stop_event.is_set():
             try:
@@ -187,18 +237,18 @@ class DaemonManager:
                     self.logger.warning("Application does not have run_cycle method")
                 
                 cycle_duration = time.time() - cycle_start_time
-                sleep_time = max(0, self.cycle_interval - cycle_duration)
+                sleep_time = max(0, self.config.daemon_check_interval - cycle_duration)
                 
                 if sleep_time > 0:
                     self.logger.debug(f"Cycle completed in {cycle_duration:.2f}s, sleeping for {sleep_time:.2f}s")
                     if self._stop_event.wait(timeout=sleep_time):
                         break
                 else:
-                    self.logger.warning(f"Cycle took {cycle_duration:.2f}s, longer than interval {self.cycle_interval}s")
+                    self.logger.warning(f"Cycle took {cycle_duration:.2f}s, longer than interval {self.config.daemon_check_interval}s")
                     
             except Exception as e:
                 self.logger.error(f"Error in daemon loop: {e}")
-                if not self._stop_event.wait(timeout=10):
+                if not self._stop_event.wait(timeout=self.config.daemon_retry_delay):
                     continue
                 else:
                     break

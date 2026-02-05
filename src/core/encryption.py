@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""
-Encryption Manager
+"""Encryption manager for sensitive data protection.
 
-Handles encryption and decryption of sensitive data using Fernet (AES-128 CBC).
+This module provides encryption and decryption of sensitive data using
+Fernet symmetric encryption (AES-128-CBC with HMAC-SHA256).
 
-Created: 2025-10-27
+The encryption key is auto-generated if not exists and stored with
+secure permissions (0o600). Key rotation is not yet implemented.
+
+Typical usage:
+    >>> enc = EncryptionManager('/var/lib/ionos-dyndns/.encryption_key')
+    >>> encrypted = enc.encrypt('api-secret-key')
+    >>> decrypted = enc.decrypt(encrypted)
+
 Author: Manuel Ziel
 License: MIT
 """
@@ -16,17 +23,37 @@ License: MIT
 import os
 from typing import Optional, Any
 from cryptography.fernet import Fernet
-from exceptions import EncryptionError
+
+# Local imports
+from .exceptions import EncryptionError, ValidationError
 
 ################################################################################
 # ENCRYPTION MANAGER CLASS
 ################################################################################
 
 class EncryptionManager:
-    """Manages encryption/decryption using Fernet (AES-128 CBC + HMAC-SHA256). Auto-generates key, enforces 0o600 permissions."""
+    """Encryption manager using Fernet (AES-128-CBC + HMAC-SHA256).
+
+    Provides symmetric encryption for sensitive data. Auto-generates
+    encryption key if not exists and enforces 0o600 permissions.
+
+    Attributes:
+        key_file: Path to the encryption key file.
+        logger: Optional logger instance for error reporting.
+    """
     
     def __init__(self, key_file_path: str, logger: Optional[Any] = None) -> None:
-        """Initialize encryption manager. Creates key file if not exists. Raises RuntimeError if setup fails."""
+        """Initialize encryption manager.
+
+        Creates the encryption key file if it does not exist.
+
+        Args:
+            key_file_path: Absolute path to encryption key file.
+            logger: Optional logger instance for error reporting.
+
+        Raises:
+            EncryptionError: If encryption setup fails.
+        """
         self.key_file = key_file_path
         self.logger = logger
         self._encryption_key = None
@@ -35,16 +62,27 @@ class EncryptionManager:
         self._setup_encryption()
     
     ################################################################################
-    # PUBLIC METHODS - Encryption and Decryption
+    # PUBLIC INTERFACE - Encryption/Decryption Operations
     ################################################################################
     
     def encrypt(self, data: str) -> str:
-        """Encrypt string data using Fernet. Returns base64 encoded string. Raises EncryptionError."""
+        """Encrypt a string using Fernet encryption.
+
+        Args:
+            data: Plain text string to encrypt. Must not be empty.
+
+        Returns:
+            Base64-encoded encrypted string.
+
+        Raises:
+            EncryptionError: If encryption fails or cipher not initialized.
+            ValidationError: If data is empty.
+        """
         if not self._cipher:
             raise EncryptionError("Encryption not initialized")
         
         if not data:
-            raise ValueError("Cannot encrypt empty data")
+            raise ValidationError("Cannot encrypt empty data")
         
         try:
             encrypted = self._cipher.encrypt(data.encode()).decode()
@@ -55,12 +93,23 @@ class EncryptionManager:
             raise EncryptionError(f"Encryption failed: {e}")
     
     def decrypt(self, encrypted_data: str) -> str:
-        """Decrypt Fernet-encrypted data. Returns plain text string. Raises EncryptionError."""
+        """Decrypt Fernet-encrypted data.
+
+        Args:
+            encrypted_data: Base64-encoded encrypted string.
+
+        Returns:
+            Decrypted plain text string.
+
+        Raises:
+            EncryptionError: If decryption fails or cipher not initialized.
+            ValidationError: If encrypted_data is empty.
+        """
         if not self._cipher:
             raise EncryptionError("Encryption not initialized")
         
         if not encrypted_data:
-            raise ValueError("Cannot decrypt empty data")
+            raise ValidationError("Cannot decrypt empty data")
         
         try:
             decrypted = self._cipher.decrypt(encrypted_data.encode()).decode()
@@ -71,15 +120,33 @@ class EncryptionManager:
             raise EncryptionError(f"Decryption failed: {e}")
     
     def rotate_key(self, new_key_file_path: str) -> None:
-        """Rotate encryption key. Not yet implemented - requires re-encrypting all data."""
+        """Rotate the encryption key.
+
+        Note:
+            NOT YET IMPLEMENTED. Requires re-encrypting all existing
+            encrypted data in the database.
+
+        Args:
+            new_key_file_path: Path for the new encryption key file.
+
+        Raises:
+            NotImplementedError: Always raised as feature is not implemented.
+        """
         raise NotImplementedError("Key rotation not yet implemented")
     
     ################################################################################
-    # PRIVATE METHODS - Encryption Setup and Key Management
+    # PRIVATE METHODS - Internal Implementation
     ################################################################################
     
     def _setup_encryption(self) -> None:
-        """Setup Fernet encryption. Loads or generates key, enforces 0o600 permissions, initializes cipher. Raises RuntimeError if fails."""
+        """Setup encryption key and cipher instance.
+
+        Loads existing key from file or generates a new one. Sets file
+        permissions to 0o600 for security.
+
+        Raises:
+            EncryptionError: If key loading or generation fails.
+        """
         try:
             if os.path.exists(self.key_file):
                 with open(self.key_file, 'rb') as f:
@@ -107,7 +174,7 @@ class EncryptionManager:
             
             # Fernet keys are always 32 bytes URL-safe base64 (44 chars)
             if len(self._encryption_key) != 44:
-                raise ValueError(
+                raise ValidationError(
                     f"Invalid encryption key length: {len(self._encryption_key)} (expected 44)"
                 )
             

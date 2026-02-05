@@ -1,10 +1,8 @@
 #!/bin/bash
 # lib/core/colors.sh - Color definitions and styling
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -22,7 +20,6 @@ readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
 readonly NC='\033[0m' # No Color
 
-# Function to strip color codes (for logging to file)
 strip_colors() {
     echo "$1" | sed 's/\x1b\[[0-9;]*m//g'
 }

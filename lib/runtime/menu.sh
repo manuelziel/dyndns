@@ -1,10 +1,8 @@
 #!/bin/bash
 # lib/runtime/menu.sh - Interactive menu functions
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -36,15 +34,15 @@ show_interactive_menu() {
         option_actions=()
         option_num=1
 
-        options+=("${option_num}) Start Application")
+        options+=("${option_num}) Start")
         option_actions+=("start_application")
         ((option_num++))
 
-        options+=("${option_num}) Stop Application")
+        options+=("${option_num}) Stop")
         option_actions+=("stop_application")
         ((option_num++))
 
-        options+=("${option_num}) Restart Application")
+        options+=("${option_num}) Restart")
         option_actions+=("restart_application")
         ((option_num++))
 
@@ -60,11 +58,7 @@ show_interactive_menu() {
         option_actions+=("setup_virtual_environment")
         ((option_num++))
 
-        options+=("${option_num}) Install Dependencies")
-        option_actions+=("install_dependencies")
-        ((option_num++))
-
-        options+=("${option_num}) Configure Application")
+        options+=("${option_num}) Configure ")
         option_actions+=("configure_application")
         ((option_num++))
 
@@ -102,12 +96,14 @@ show_interactive_menu() {
 
             case "${action}" in
                 "start_application")
+                    export DAEMON_MODE=1
                     start_application
                     ;;
                 "stop_application")
                     stop_application
                     ;;
                 "restart_application")
+                    export DAEMON_MODE=1
                     restart_application
                     ;;
                 "show_recent_logs")
@@ -122,9 +118,6 @@ show_interactive_menu() {
                     else
                         print_warning "Python support is not enabled in the config."
                     fi
-                    ;;
-                "install_dependencies")
-                    install_dependencies
                     ;;
                 "configure_application")
                     configure_application
@@ -145,8 +138,7 @@ show_interactive_menu() {
                     ;;
             esac
         else
-            print_error "Invalid selection. Please enter a number between 0 and ${max_choice}."
-            read -rp "Press Enter to continue..."
+            print_error "Invalid selection. Enter a number between 0 and ${max_choice}."
         fi
 
         if [[ "${action:-}" != "exit" ]]; then
@@ -176,7 +168,6 @@ show_help() {
     echo "  recent-logs             # Show recent ${software_name} logs"
     echo "  live-logs               # Show live ${software_name} logs"
     echo "  setup-env               # Setup Python virtual environment"
-    echo "  install-deps            # Install ${software_name} dependencies"
     echo "  config                  # Configure ${software_name}"
     echo "  status                  # Show ${software_name} status"
     echo "  help, -h                # Show this help"
@@ -197,7 +188,6 @@ show_help() {
     echo "  ${cmd_name} recent-logs          # Show recent logs"
     echo "  ${cmd_name} live-logs            # Show live logs"
     echo "  ${cmd_name} setup-env            # Setup Python virtual environment"
-    echo "  ${cmd_name} install-deps         # Install dependencies"
     echo "  ${cmd_name} config               # Configure application"
     echo "  ${cmd_name} status               # Show status"
     echo "  ${cmd_name} --interactive        # Show interactive menu"
@@ -218,7 +208,7 @@ show_status() {
     
     echo ""
     echo "Configuration:"
-    echo "  File directory: ${install_path}"
-    echo "  PID file: ${pid_file}"
-    echo "  Config file: ${config_file}"
+    echo "  Install path:  ${install_path}"
+    echo "  Config file:   ${config_file}"
+    echo "  PID file:      ${pid_file}"
 }

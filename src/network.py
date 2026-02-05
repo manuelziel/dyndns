@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""
-Network Utilities Module
+"""Network utilities module for IP detection and connectivity.
 
-Network-related utilities like IP detection, connectivity checks, etc.
+This module provides the NetworkData class for detecting public IP addresses,
+tracking IP changes, and managing network configuration state.
 
-Created: 2025-10-27
+Typical usage:
+    >>> network = NetworkData(config, logger)
+    >>> ipv4, ipv6 = network.load_current_ip_addresses()
+
 Author: Manuel Ziel
 License: MIT
 """
@@ -17,60 +20,69 @@ import requests
 import time
 import logging
 from typing import Optional, Tuple, Dict, Any
-from exceptions import NetworkError
 
 ################################################################################
 # NETWORK DATA CLASS - IP Detection and State Management
 ################################################################################
 
 class NetworkData:
-    """Network data container for IP addresses and network configuration."""
-    
-    def __init__(self, ipv4_address: Optional[str] = None, ipv6_address: Optional[str] = None, 
-                 last_ipv4_address: Optional[str] = None, last_ipv6_address: Optional[str] = None) -> None:
-        self.ipv4_address = ipv4_address
-        self.ipv6_address = ipv6_address
-        self.last_ipv4_address = last_ipv4_address
-        self.last_ipv6_address = last_ipv6_address
-        
-        self.ipv4_enabled = True
-        self.ipv6_enabled = True
-        self.ipv4_detection_url = "https://api.ipify.org"
-        self.ipv6_detection_url = "https://api6.ipify.org"
-        self.timeout = 10
-        self.retry_attempts = 3
-        self.logger = logging.getLogger(__name__)
+    """Network data container for IP addresses and network configuration.
 
-    ################################################################################
-    # CONFIGURATION METHODS - Setup and Initialization
-    ################################################################################
+    Attributes:
+        config: ConfigManager instance with network settings.
+        logger: Logger instance for debug and error messages.
+        ipv4_address: Current detected IPv4 address or None.
+        ipv6_address: Current detected IPv6 address or None.
+        last_ipv4_address: Previously saved IPv4 address or None.
+        last_ipv6_address: Previously saved IPv6 address or None.
+        ipv4_enabled: Whether IPv4 detection is enabled.
+        ipv6_enabled: Whether IPv6 detection is enabled.
+        ipv4_detection_url: URL for IPv4 address detection service.
+        ipv6_detection_url: URL for IPv6 address detection service.
+        timeout: Request timeout in seconds.
+        retry_attempts: Number of retry attempts for failed requests.
+    """
+    
+    def __init__(self, config: Any, logger: Optional[Any] = None,
+                 ipv4_enabled: Optional[bool] = None, ipv6_enabled: Optional[bool] = None) -> None:
+        """Initialize NetworkData with configuration object.
+
+        Args:
+            config: ConfigManager instance with network settings.
+            logger: Optional logger instance for logging output.
+            ipv4_enabled: Override config.network_ipv4_enabled if set.
+            ipv6_enabled: Override config.network_ipv6_enabled if set.
+        """
+        self.config = config
+        self.logger = logger if logger else logging.getLogger(__name__)
         
-    def setup(self, ipv4_enabled: bool = True, ipv6_enabled: bool = True, 
-              ipv4_detection_url: Optional[str] = None, ipv6_detection_url: Optional[str] = None,
-              timeout: Optional[int] = None, retry_attempts: Optional[int] = None, logger: Optional[Any] = None) -> bool:
-        """Configure network data collection. Sets IPv4/IPv6 detection URLs, timeout, retry attempts, and logger."""
-        self.ipv4_enabled = ipv4_enabled
-        self.ipv6_enabled = ipv6_enabled
+        # IP address state
+        self.ipv4_address: Optional[str] = None
+        self.ipv6_address: Optional[str] = None
+        self.last_ipv4_address: Optional[str] = None
+        self.last_ipv6_address: Optional[str] = None
         
-        if ipv4_detection_url:
-            self.ipv4_detection_url = ipv4_detection_url
-        if ipv6_detection_url:
-            self.ipv6_detection_url = ipv6_detection_url
-        if timeout is not None:
-            self.timeout = timeout
-        if retry_attempts is not None:
-            self.retry_attempts = retry_attempts
-        if logger:
-            self.logger = logger
-            
-        return True
+        # Settings from config (with optional overrides)
+        self.ipv4_enabled = ipv4_enabled if ipv4_enabled is not None else config.network_ipv4_enabled
+        self.ipv6_enabled = ipv6_enabled if ipv6_enabled is not None else config.network_ipv6_enabled
+        self.ipv4_detection_url = config.network_ipv4_detection_url
+        self.ipv6_detection_url = config.network_ipv6_detection_url
+        self.timeout = config.network_timeout
+        self.retry_attempts = config.network_retry_attempts
 
     ################################################################################
     # IP ADDRESS DETECTION - Public IP Retrieval
     ################################################################################
     
     def load_current_ip_addresses(self) -> Tuple[Optional[str], Optional[str]]:
-        """Load current public IP addresses. Returns tuple (ipv4_address, ipv6_address)."""
+        """Load current public IP addresses from detection services.
+
+        Fetches IPv4 and/or IPv6 addresses based on enabled settings.
+
+        Returns:
+            Tuple of (ipv4_address, ipv6_address), either may be None
+            if detection failed or is disabled.
+        """
         if self.ipv4_enabled:
             self.ipv4_address = self.get_current_public_ipv4_address()
         
@@ -80,7 +92,15 @@ class NetworkData:
         return self.ipv4_address, self.ipv6_address
 
     def get_current_public_ipv4_address(self, retries: Optional[int] = None, timeout: Optional[int] = None) -> Optional[str]:
-        """Get current public IPv4 address with retry logic. Returns IPv4 string or None if failed."""
+        """Get current public IPv4 address with retry logic.
+
+        Args:
+            retries: Number of retry attempts, defaults to config value.
+            timeout: Request timeout in seconds, defaults to config value.
+
+        Returns:
+            IPv4 address string if successful, None if all attempts failed.
+        """
         retries = retries if retries is not None else self.retry_attempts
         timeout = timeout if timeout is not None else self.timeout
         
@@ -106,7 +126,15 @@ class NetworkData:
         return None
 
     def get_current_public_ipv6_address(self, retries: Optional[int] = None, timeout: Optional[int] = None) -> Optional[str]:
-        """Get current public IPv6 address with retry logic. Returns IPv6 string or None if failed."""
+        """Get current public IPv6 address with retry logic.
+
+        Args:
+            retries: Number of retry attempts, defaults to config value.
+            timeout: Request timeout in seconds, defaults to config value.
+
+        Returns:
+            IPv6 address string if successful, None if all attempts failed.
+        """
         retries = retries if retries is not None else self.retry_attempts
         timeout = timeout if timeout is not None else self.timeout
         
@@ -136,12 +164,21 @@ class NetworkData:
     ################################################################################
         
     def save_current_as_last(self) -> None:
-        """Save current IP addresses as last known addresses."""
+        """Save current IP addresses as last known addresses.
+
+        Copies ipv4_address to last_ipv4_address and ipv6_address to
+        last_ipv6_address for change detection.
+        """
         self.last_ipv4_address = self.ipv4_address
         self.last_ipv6_address = self.ipv6_address
         
     def has_ip_changed(self) -> Dict[str, bool]:
-        """Check if IP addresses have changed since last save. Returns dict with 'ipv4_changed' and 'ipv6_changed' bools."""
+        """Check if IP addresses have changed since last save.
+
+        Returns:
+            Dictionary with 'ipv4_changed' and 'ipv6_changed' boolean values
+            indicating whether each address type has changed.
+        """
         return {
             'ipv4_changed': self.ipv4_address != self.last_ipv4_address,
             'ipv6_changed': self.ipv6_address != self.last_ipv6_address
@@ -152,7 +189,12 @@ class NetworkData:
     ################################################################################
         
     def get_status(self) -> Dict[str, Any]:
-        """Get current network status. Returns dict with all IP addresses and enabled flags."""
+        """Get current network status information.
+
+        Returns:
+            Dictionary containing current and last IP addresses for both
+            IPv4 and IPv6, plus enabled flags for each protocol.
+        """
         return {
             'ipv4_address': self.ipv4_address,
             'ipv6_address': self.ipv6_address,

@@ -1,10 +1,8 @@
 #!/bin/bash
 # lib/core/logging.sh - Logging and output functions
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #

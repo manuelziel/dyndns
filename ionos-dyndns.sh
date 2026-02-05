@@ -1,9 +1,7 @@
 #!/bin/bash
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -36,7 +34,6 @@ else
     done
 fi
 
-# Error if no library directory found
 if [[ -z "${LIB_BASE_DIR:-}" ]]; then
     echo "ERROR: No library directory found!" >&2
     echo "Script: ${SCRIPT_NAME} (derived name: ${DERIVED_NAME})" >&2
@@ -47,7 +44,7 @@ if [[ -z "${LIB_BASE_DIR:-}" ]]; then
     exit 1
 fi
 
-# Load remaining core libraries (config.sh already loaded above)
+# Load remaining core libraries (config.sh already loaded)
 source "$LIB_BASE_DIR/core/colors.sh"
 source "$LIB_BASE_DIR/core/logging.sh"  
 source "$LIB_BASE_DIR/core/essentials.sh"
@@ -68,6 +65,7 @@ DAEMON_MODE=0
 INTERACTIVE_MODE=0
 ACTION=""
 CLI_ARGS=()
+PYTHON_ARGS=()
 
 ################################################################################
 # MAIN SCRIPT LOGIC
@@ -86,7 +84,6 @@ cleanup_and_exit() {
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-            # Actions with normalization
             start)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
@@ -147,16 +144,6 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-            install-deps)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="$1"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
             config)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
@@ -171,7 +158,6 @@ parse_arguments() {
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
                     shift
-                    # Store remaining args for Python CLI
                     CLI_ARGS=("$@")
                     break
                 else
@@ -184,7 +170,6 @@ parse_arguments() {
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
                     shift
-                    # Store remaining args for Python CLI
                     CLI_ARGS=("$@")
                     break
                 else
@@ -237,6 +222,11 @@ parse_arguments() {
                 QUIET_MODE=1
                 shift
                 ;;
+            --)
+                shift
+                PYTHON_ARGS=("$@")
+                break
+                ;;
                 
             # Error handling
             -*)
@@ -252,33 +242,31 @@ parse_arguments() {
         esac
     done
     
-    # Handle default action based on flags
     if [[ -z "${ACTION:-}" ]]; then
         if [[ $DAEMON_MODE -eq 1 ]]; then
-            # --daemon without action defaults to 'start --daemon'
             ACTION="start"
         else
             ACTION="interactive"
         fi
     fi
+    
+    if [[ $DAEMON_MODE -eq 1 ]]; then
+        export DAEMON_MODE=1
+    fi
 }
 
-# Main function
 main() {
     parse_arguments "$@"
-    
-    # Define actions that require root privileges
     local requires_root=false
+
     case "$ACTION" in
-        start|stop|restart|setup-env|install-deps)
+        start|stop|restart|setup-env)
             requires_root=true
             ;;
         config|import|export)
-            # CLI commands don't require root - operate on user's database
             requires_root=true
             ;;
         interactive)
-            # Interactive mode requires root for most operations
             requires_root=true
             ;;
     esac
@@ -289,20 +277,19 @@ main() {
         fi
     fi
     
-    # Execute based on action
     case "$ACTION" in
         start)
             if [[ $DAEMON_MODE -eq 1 ]]; then
-                start_daemon
+                start_daemon "${PYTHON_ARGS[@]}"
             else
-                start_application
+                start_application "${PYTHON_ARGS[@]}"
             fi
             ;;
         stop)
             stop_application
             ;;
         restart)
-            restart_application
+            restart_application "${PYTHON_ARGS[@]}"
             ;;
         recent-logs)
             show_recent_logs
@@ -312,9 +299,6 @@ main() {
             ;;
         setup-env)
             setup_python_environment
-            ;;
-        install-deps)
-            install_python_dependencies
             ;;
         config)
             configure_application

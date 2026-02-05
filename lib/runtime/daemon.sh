@@ -1,10 +1,8 @@
 #!/bin/bash
-# lib/runtime/daemon.sh
+# lib/runtime/daemon.sh - Daemon runtime functions
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -14,10 +12,10 @@
 # 1. CORE UTILITIES & STATUS
 ################################################################################
 
-# Function to check if application is running
 is_running() {
     local pid_file="${PID_FILE}"
     local pid
+    local python_script="${PYTHON_SCRIPT:-"${BIN_DIR}/${SOFTWARE_DIR_NAME}.py"}"
 
     if [[ -f "${pid_file}" ]]; then
         pid=$(cat "${pid_file}" 2>/dev/null)
@@ -27,10 +25,14 @@ is_running() {
             rm -f "${pid_file}"
         fi
     fi
+
+    if pgrep -f "^python3 .*${python_script}" > /dev/null 2>&1; then
+        return 0
+    fi
+
     return 1
 }
 
-# Function to get daemon status
 get_daemon_status() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local pid_file="${PID_FILE}"
@@ -46,11 +48,10 @@ get_daemon_status() {
     fi
 }
 
-################################################################################  
+################################################################################
 # 2. PID FILE MANAGEMENT
 ################################################################################
 
-# Function to create PID file
 create_pid_file() {
     local pid_file="${PID_FILE}"
 
@@ -61,7 +62,6 @@ create_pid_file() {
     fi
 }
 
-# Function to remove PID file
 remove_pid_file() {
     local pid_file="${PID_FILE}"
 
@@ -92,24 +92,24 @@ start_daemon() {
 
     if is_running; then
         print_warning "${software_name} is already running"
-        return 0
+        return 1
     fi
-    
-    create_pid_file
+
+    # Note: PID file is created by start_python_application() with the Python PID
+    # Do NOT create PID file here with bash's $$ - that would be wrong for forking services
 
     if [[ "${enable_python}" -eq 1 ]]; then
         if ! setup_python_environment; then
             print_error "Failed to setup Python environment"
             cleanup_and_exit 1
         fi
-    fi    
-    do_main_work --daemon
+    fi
+    
+    do_main_work "$@"
 }
 
 stop_daemon() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-    local pid_file="${PID_FILE}"
-    local pid
 
     print_info "Stopping ${software_name}..."
 
@@ -118,16 +118,8 @@ stop_daemon() {
         return 0
     fi
 
-    # Get the PID from the PID file when we know the service is running
-    pid=$(cat "${pid_file}" 2>/dev/null)
     stop_application
-
-    if kill "${pid}" 2>/dev/null; then
-        print_success "${software_name} stopped successfully"
-        remove_pid_file
-        return 0
-    else
-        print_error "Failed to stop ${software_name}"
-        return 1
-    fi
+    remove_pid_file
+    
+    return 0
 }

@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""
-Main Application Module
+"""Main application module containing core business logic.
 
-Contains the core application logic. This module should be customized
-for each specific application while maintaining the interface.
+This module provides the Application class which contains the main business
+logic for the IONOS DynDNS daemon. It handles IP detection, DNS record
+synchronization, and update operations.
 
-Created: 2025-10-27
+Typical usage:
+    >>> app = Application(config, logger)
+    >>> app.run_cycle()  # Single daemon cycle
+    >>> # Or for interactive mode:
+    >>> app.execute_update(force=True)
+
 Author: Manuel Ziel
 License: MIT
-
-This program is free software: you can redistribute it and/or modify
 """
 
 ################################################################################
@@ -21,79 +24,82 @@ import time
 import threading
 from typing import Optional, Dict, List, Any
 
-# Project imports
-from colors import LOG_SYMBOLS
-from cli_helpers import get_placeholder_ip
-from network import NetworkData
-from api import ProviderDNSClient
-from exceptions import RecordNotFoundError, ZoneNotFoundError
+# Local imports
+from .core.exceptions import (
+    DatabaseError,
+    NetworkError,
+    APIError,
+    RecordNotFoundError
+)
+from .core.constants import SyncStatus, UpdateStatus, RecordType
+
+# Local imports - Modules
+from .cli_helpers import get_placeholder_ip
+from .network import NetworkData
+from .api import ProviderDNSClient
+from .utils.colors import LOG_SYMBOLS
 
 ################################################################################
 # APPLICATION CLASS - Core Business Logic
 ################################################################################
 
 class Application:
-    """Main application class for DynDNS daemon cycle management."""
-    
+    """Main application class for DynDNS daemon cycle management.
+
+    Provides IP detection, DNS record synchronization with IONOS provider,
+    and automatic DNS updates when IP addresses change.
+
+    Attributes:
+        config: Configuration object from ConfigManager.
+        logger: Logger instance from LoggerManager.
+        running: Whether the application is currently running.
+        database: Database instance for zone and record storage.
+        network: NetworkData instance for IP detection.
+    """
+
     def __init__(self, config: Any, logger: Any) -> None:
-        """
-        Initialize application.
-        
+        """Initialize application with configuration and logger.
+
         Args:
-            config: Configuration object from config.py
-            logger: Logger instance from logger.py
+            config: Configuration object from ConfigManager.
+            logger: Logger instance from LoggerManager.
         """
         self.config = config
         self.logger = logger
         self.running = False
         self._stop_event = threading.Event()
-        
         self.database = config.db
-        
-        self.network = NetworkData()
-        self.network.setup(
-            ipv4_enabled=config.network_ipv4_enabled,
-            ipv6_enabled=config.network_ipv6_enabled,
-            ipv4_detection_url=config.network_ipv4_detection_url,
-            ipv6_detection_url=config.network_ipv6_detection_url,
-            timeout=config.network_timeout,
-            retry_attempts=config.network_retry_attempts,
-            logger=logger
-        )
-        
+        self.network = NetworkData(config=config, logger=logger)
         self.enabled_zones = None
-        
-        # Provider API client (initialized per zone when needed)
-        self._provider_clients = {}  # zone_id → ProviderDNSClient
+        self._provider_clients = {}
         
         self.logger.info("Application initialized")
             
     def run_cycle(self) -> bool:
-        """
-        Execute one daemon cycle (load → process → save → finalize).
-        
+        """Execute one daemon cycle (load → process → save → finalize).
+
         Returns:
-            bool: True if successful, False otherwise
+            True if cycle completed successfully, False otherwise.
         """
         try:
             self.logger.debug("Starting application cycle...")
             
-            if not self._step_load_data():
+            if not self._load_data():
                 self.logger.warning("Data loading failed")
                 self._reset_state()
                 return False
             
-            if not self._step_process_data():
+            if not self._process_records():
                 self.logger.warning("Data processing failed") 
                 self._reset_state()
                 return False
             
-            if not self._step_save_results():
-                self.logger.warning("Result saving failed")
+            if not self._save_updates():
+                self.logger.warning("Saving updates failed")
                 self._reset_state()
                 return False
             
-            if not self._step_finalize():
+            if not self._finalize_cycle():
                 self.logger.warning("Finalization failed")
                 self._reset_state()
                 return False
@@ -101,8 +107,12 @@ class Application:
             self.logger.debug("Application cycle completed successfully")
             return True
             
-        except Exception as e:
+        except (DatabaseError, NetworkError, APIError) as e:
             self.logger.error(f"Application cycle failed: {e}")
+            self._reset_state()
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error in application cycle: {e}")
             self._reset_state()
             return False
 
@@ -111,7 +121,13 @@ class Application:
     ################################################################################
 
     def stop(self) -> bool:
-        """Stop application gracefully with timeout."""
+        """Stop application gracefully with timeout.
+
+        Waits up to 30 seconds for pending operations to complete.
+
+        Returns:
+            True if stopped gracefully, False if timeout reached.
+        """
         self.logger.info("Stopping application...")
         self._stop_event.set()
         self.running = False
@@ -126,18 +142,22 @@ class Application:
             
         if wait_count >= max_wait:
             self.logger.warning("Application did not stop gracefully within timeout")
-        else:
-            self.logger.info("Application stopped successfully")
+            return False
+        
+        self.logger.info("Application stopped successfully")
+        return True
 
     def cleanup(self) -> None:
-        """Cleanup resources (database connections, etc.)."""
+        """Cleanup resources (database connections, etc.).
+
+        Stops the application if running and closes all open connections.
+        """
         self.logger.info("Cleaning up application resources...")
         
         try:
             if self.running:
                 self.stop()
 
-            # Close database connection pool
             if self.database:
                 self.database.close()
                 self.logger.debug("Database connections closed")
@@ -152,19 +172,25 @@ class Application:
     ################################################################################
 
     def is_running(self) -> bool:
-        """Return current running state."""
+        """Return current running state.
+
+        Returns:
+            True if application is running, False otherwise.
+        """
         return self.running
 
     ################################################################################
-    # PRIVATE METHODS - 4-Step Pipeline Implementation
+    # PRIVATE METHODS - Cycle Pipeline
     ################################################################################
 
-    def _step_load_data(self) -> bool:
-        """
-        Step 1: Load current IP addresses and database state.
-        
+    def _load_data(self) -> bool:
+        """Load current IP addresses and database state.
+
+        Detects current public IP addresses and loads enabled zones with
+        their records from the database.
+
         Returns:
-            bool: True if successful, False otherwise
+            True if data loaded successfully, False otherwise.
         """
         try:
             self.logger.debug("Checking network and IP addresses...")
@@ -187,7 +213,6 @@ class Application:
             
             changes = self.network.has_ip_changed()
             
-            # Only log INFO when IP actually changed
             if changes['ipv4_changed']:
                 self.logger.info(f"IPv4 address changed: {self.network.last_ipv4_address} {LOG_SYMBOLS['ARROW']} {ipv4}")
             else:
@@ -220,15 +245,21 @@ class Application:
                 self.logger.debug(f"Loaded zone '{zone['zone_name']}' with {len(zone['records'])} records")
             
             self.logger.debug(f"Loaded {len(self.enabled_zones)} zones with {total_records} total records")
-            self.logger.debug("Network check and database load completed successfully")
+            self.logger.debug("Data loading completed")
             return True
             
         except Exception as e:
             self.logger.error(f"Network check or database load failed: {e}")
             return False
     
-    def _step_process_data(self) -> bool:
-        """Step 2: Compare detected IPs with database records."""
+    def _process_records(self) -> bool:
+        """Compare detected IPs with database records.
+
+        Determines which records need updates based on IP changes.
+
+        Returns:
+            True if processing completed successfully, False otherwise.
+        """
         try:
             if not self.enabled_zones:
                 self.logger.debug("No zones to process")
@@ -250,13 +281,13 @@ class Application:
                 for record in zone['records']:
                     total_records += 1
                     
-                    if record['record_type'] == 'A':
+                    if record['record_type'] == RecordType.A:
                         new_ip = self.network.ipv4_address
                         if not new_ip:
                             self.logger.debug(f"Skipping A record '{record['record_name']}' - no IPv4 detected")
                             continue
                             
-                    elif record['record_type'] == 'AAAA':
+                    elif record['record_type'] == RecordType.AAAA:
                         new_ip = self.network.ipv6_address
                         if not new_ip:
                             self.logger.debug(f"Skipping AAAA record '{record['record_name']}' - no IPv6 detected")
@@ -317,15 +348,21 @@ class Application:
             else:
                 self.logger.debug(f"All {total_records} records up-to-date")
             
-            self.logger.debug("Data processing step completed")
+            self.logger.debug("Data processing completed")
             return True
             
         except Exception as e:
-            self.logger.error(f"Data processing step failed: {e}")
+            self.logger.error(f"Data processing failed: {e}")
             return False
     
-    def _step_save_results(self) -> bool:
-        """Step 3: Update database and provider DNS with new IPs."""
+    def _save_updates(self) -> bool:
+        """Update database and provider DNS with new IPs.
+
+        Synchronizes zones if needed and pushes IP updates to the provider API.
+
+        Returns:
+            True if all updates completed successfully, False otherwise.
+        """
         try:
             if not self.enabled_zones:
                 self.logger.debug("No zones to save")
@@ -363,13 +400,13 @@ class Application:
                     
                     if not record.get('needs_update'):
                         try:
-                            if record['record_type'] == 'A' and self.network.ipv4_address:
+                            if record['record_type'] == RecordType.A and self.network.ipv4_address:
                                 self.database.update_ip_address(
                                     record_id=record['id'],
                                     ip_address=self.network.ipv4_address,
                                     changed=False
                                 )
-                            elif record['record_type'] == 'AAAA' and self.network.ipv6_address:
+                            elif record['record_type'] == RecordType.AAAA and self.network.ipv6_address:
                                 self.database.update_ip_address(
                                     record_id=record['id'],
                                     ip_address=self.network.ipv6_address,
@@ -388,12 +425,12 @@ class Application:
                                 f"Record '{record['record_name']}' still missing provider_record_id "
                                 f"after sync - skipping"
                             )
-                            raise Exception("Missing provider_record_id after sync")
+                            raise APIError("Missing provider_record_id after sync")
                         
                         provider_update_success = self._update_provider_record(record, new_ip)
                         
                         if not provider_update_success:
-                            raise Exception("Provider API update failed")
+                            raise APIError("Provider API update failed")
                         
                         self.database.update_ip_address(
                             record_id=record['id'],
@@ -405,13 +442,13 @@ class Application:
                             record_id=record['id'],
                             old_ip=old_ip,
                             new_ip=new_ip,
-                            status='success'
+                            status=UpdateStatus.SUCCESS
                         )
                         
                         updates_succeeded += 1
                         self.logger.info(f"{LOG_SYMBOLS['SUCCESS']} Updated '{record['record_name']}' ({record['record_type']}): {old_ip} {LOG_SYMBOLS['ARROW']} {new_ip}")
                         
-                    except Exception as e:
+                    except (APIError, RecordNotFoundError) as e:
                         updates_failed += 1
                         error_msg = str(e)
                         self.logger.error(f"{LOG_SYMBOLS['ERROR']} Failed to update '{record['record_name']}' ({record['record_type']}): {error_msg}")
@@ -421,39 +458,54 @@ class Application:
                                 record_id=record['id'],
                                 old_ip=old_ip,
                                 new_ip=new_ip,
-                                status='failed',
+                                status=UpdateStatus.FAILED,
                                 error_message=error_msg
                             )
-                        except Exception as log_error:
+                        except DatabaseError as log_error:
                             self.logger.error(f"Failed to log update failure: {log_error}")
+                    except Exception as e:
+                        updates_failed += 1
+                        self.logger.error(f"{LOG_SYMBOLS['ERROR']} Unexpected error updating '{record['record_name']}': {e}")
             
             if updates_succeeded > 0 or updates_failed > 0:
                 self.logger.info(f"Database updates: {updates_succeeded} succeeded, {updates_failed} failed")
             
-            self.logger.debug("Result saving step completed")
+            self.logger.debug("Updates saved successfully")
             return True
             
+        except (DatabaseError, APIError) as e:
+            self.logger.error(f"Failed to save updates: {e}")
+            return False
         except Exception as e:
-            self.logger.error(f"Result saving step failed: {e}")
+            self.logger.error(f"Unexpected error saving updates: {e}")
             return False
     
-    def _step_finalize(self) -> bool:
-        """Step 4: Save IP state and cleanup temporary data."""
+    def _finalize_cycle(self) -> bool:
+        """Save IP state and cleanup temporary data.
+
+        Stores current IPs as last-known values for next cycle comparison.
+
+        Returns:
+            True if finalization completed successfully, False otherwise.
+        """
         try:
             self.network.save_current_as_last()
             self.logger.debug(f"Saved IPs for next cycle: IPv4={self.network.last_ipv4_address}, IPv6={self.network.last_ipv6_address}")
             
             self.enabled_zones = None
             
-            self.logger.debug("Finalization step completed")
+            self.logger.debug("Cycle finalized")
             return True
             
         except Exception as e:
-            self.logger.error(f"Finalization step failed: {e}")
+            self.logger.error(f"Finalization failed: {e}")
             return False
     
     def _reset_state(self) -> None:
-        """Reset application state after errors."""
+        """Reset application state after errors.
+
+        Clears cached zones and records to ensure clean state for next cycle.
+        """
         try:
             self.enabled_zones = None
             
@@ -467,11 +519,10 @@ class Application:
     ################################################################################
     
     def _collect_zones_needing_sync(self) -> set:
-        """
-        Collect zones that need sync due to missing provider_record_ids.
-        
+        """Collect zones that need sync due to missing provider_record_ids.
+
         Returns:
-            set: Set of zone IDs that need syncing
+            Set of zone IDs that need syncing with provider.
         """
         zones_to_sync = set()
         
@@ -493,7 +544,11 @@ class Application:
         return zones_to_sync
     
     def _sync_zones_and_refresh_records(self, zone_ids: set) -> None:
-        """Sync zones and refresh record data from database."""
+        """Sync zones and refresh record data from database.
+
+        Args:
+            zone_ids: Set of zone IDs to synchronize.
+        """
         for zone_id in zone_ids:
             if not self._sync_provider_ids(zone_id):
                 if self.config.daemon_sync_checks:
@@ -517,7 +572,14 @@ class Application:
                     break
     
     def _get_provider_client(self, zone_id: int) -> Optional[ProviderDNSClient]:
-        """Get or create cached provider API client for zone."""
+        """Get or create cached provider API client for zone.
+
+        Args:
+            zone_id: Database zone ID.
+
+        Returns:
+            ProviderDNSClient instance or None if creation fails.
+        """
         if zone_id in self._provider_clients:
             return self._provider_clients[zone_id]
         
@@ -532,9 +594,7 @@ class Application:
             
             client = ProviderDNSClient(
                 api_key=api_key,
-                base_url=self.config.provider_api_base_url,
-                timeout=self.config.provider_api_timeout,
-                retries=self.config.provider_api_retry_attempts,
+                config=self.config,
                 logger=self.logger
             )
             self._provider_clients[zone_id] = client
@@ -547,7 +607,14 @@ class Application:
             return None
     
     def _sync_provider_ids(self, zone_id: Optional[int] = None) -> bool:
-        """Sync provider zone_id and record_ids from API to database."""
+        """Sync provider zone_id and record_ids from API to database.
+
+        Args:
+            zone_id: Optional specific zone ID. Syncs all enabled zones if None.
+
+        Returns:
+            True if sync completed successfully, False otherwise.
+        """
         try:
             if zone_id:
                 zone = self.database.get_zone_by_id(zone_id)
@@ -567,21 +634,21 @@ class Application:
             for zone in zones:
                 self.logger.debug(f"════════ Syncing zone '{zone['zone_name']}' (ID: {zone['id']}) ════════")
                 try:
-                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Step 1: Getting provider API client for zone {zone['id']}")
+                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Getting provider API client for zone {zone['id']}")
                     client = self._get_provider_client(zone['id'])
                     if not client:
                         self.logger.error(f"{LOG_SYMBOLS['ERROR']} Cannot sync zone {zone['zone_name']} - no API client")
                         continue
                     self.logger.debug(f"{LOG_SYMBOLS['SUCCESS']} API client created successfully")
                     
-                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Step 2: Fetching zones from provider...")
+                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Fetching zones from provider...")
                     provider_zones = client.get_zones()
                     if not provider_zones:
                         self.logger.error(f"{LOG_SYMBOLS['ERROR']} Failed to fetch zones from provider for {zone['zone_name']}")
                         continue
                     self.logger.debug(f"{LOG_SYMBOLS['SUCCESS']} Retrieved {len(provider_zones)} zones from provider")
                     
-                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Step 3: Finding zone '{zone['zone_name']}' in provider zones...")
+                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Finding zone '{zone['zone_name']}' in provider zones...")
                     provider_zone = next(
                         (pz for pz in provider_zones if pz['name'] == zone['zone_name']),
                         None
@@ -595,11 +662,11 @@ class Application:
                     provider_zone_id = provider_zone['id']
                     self.logger.debug(f"{LOG_SYMBOLS['SUCCESS']} Found zone with provider ID: {provider_zone_id}")
                     
-                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Step 4: Updating database with provider_zone_id...")
+                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Updating database with provider_zone_id...")
                     self.database.update_zone(zone['id'], provider_zone_id=provider_zone_id)
                     self.logger.debug(f"{LOG_SYMBOLS['SUCCESS']} Database updated with provider zone ID")
                     
-                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Step 5: Fetching records for zone ID: {provider_zone_id}")
+                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Fetching records for zone ID: {provider_zone_id}")
                     provider_records = client.get_zone_records(provider_zone_id)
                     if provider_records is None:
                         self.logger.error(f"{LOG_SYMBOLS['ERROR']} Failed to fetch records for zone '{zone['zone_name']}'")
@@ -607,11 +674,11 @@ class Application:
                     
                     self.logger.debug(f"{LOG_SYMBOLS['SUCCESS']} Retrieved {len(provider_records)} records from provider")
                     
-                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Step 6: Loading database records for zone...")
+                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Loading database records for zone...")
                     db_records = self.database.get_records_by_zone(zone['id'], enabled_only=False)
                     self.logger.debug(f"{LOG_SYMBOLS['SUCCESS']} Retrieved {len(db_records)} records from database")
                     
-                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Step 7: Matching {len(db_records)} DB records with {len(provider_records)} provider records...")
+                    self.logger.debug(f"{LOG_SYMBOLS['ARROW']} Matching {len(db_records)} DB records with {len(provider_records)} provider records...")
                     
                     matched_count = 0
                     unmatched_count = 0
@@ -706,7 +773,16 @@ class Application:
             return False
     
     def _create_missing_records(self, client: ProviderDNSClient, zone: Dict[str, Any], missing_records: List[Dict[str, Any]]) -> int:
-        """Create missing DNS records in provider."""
+        """Create missing DNS records in provider.
+
+        Args:
+            client: ProviderDNSClient instance for API calls.
+            zone: Zone dictionary with provider_zone_id.
+            missing_records: List of database records to create.
+
+        Returns:
+            Number of records successfully created.
+        """
         if not missing_records:
             return 0
         
@@ -718,10 +794,10 @@ class Application:
                 db_record = dict(db_record_row)
                 
                 try:
-                    if db_record['record_type'] == 'A':
-                        content = self.network.ipv4_address or get_placeholder_ip('A')
-                    elif db_record['record_type'] == 'AAAA':
-                        content = self.network.ipv6_address or get_placeholder_ip('AAAA')
+                    if db_record['record_type'] == RecordType.A:
+                        content = self.network.ipv4_address or get_placeholder_ip(RecordType.A)
+                    elif db_record['record_type'] == RecordType.AAAA:
+                        content = self.network.ipv6_address or get_placeholder_ip(RecordType.AAAA)
                     else:
                         self.logger.warning(f"Unsupported record type '{db_record['record_type']}' - skipping")
                         continue
@@ -764,7 +840,15 @@ class Application:
             return 0
     
     def _update_provider_record(self, record: Dict[str, Any], new_ip: str) -> bool:
-        """Update single DNS record in provider with orphan detection."""
+        """Update single DNS record in provider with orphan detection.
+
+        Args:
+            record: Record dictionary with provider_record_id and zone_id.
+            new_ip: New IP address to set.
+
+        Returns:
+            True if update successful, False otherwise.
+        """
         try:
             if not record.get('provider_record_id'):
                 self.logger.error(f"Record '{record['record_name']}' missing provider_record_id")
@@ -803,7 +887,7 @@ class Application:
                     if self.config.daemon_sync_checks:
                         self.database.update_record(
                             record['id'],
-                            sync_status='synced',
+                            sync_status=SyncStatus.SYNCED,
                             last_synced_at=time.time()
                         )
                     
@@ -831,7 +915,7 @@ class Application:
                                     self.database.update_record(
                                         record['id'],
                                         provider_record_id=None,
-                                        sync_status='orphaned'
+                                        sync_status=SyncStatus.ORPHANED
                                     )
                                     
                                     self.logger.info(
@@ -853,7 +937,7 @@ class Application:
                     self.database.update_record(
                         record['id'],
                         provider_record_id=None,
-                        sync_status='orphaned'
+                        sync_status=SyncStatus.ORPHANED
                     )
                     
                     self.logger.info(

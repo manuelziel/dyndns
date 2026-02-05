@@ -1,10 +1,8 @@
 #!/bin/bash
 # lib/modules/python.sh - Python virtual environment management
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -119,7 +117,6 @@ export_python_environment() {
         export PYTHON_SRC_DIR="${python_src_dir}"
     fi
     
-    # Export debug and verbose flags if set
     if [[ "${debug:-0}" -eq 1 ]]; then
         export DEBUG=1
     fi
@@ -137,8 +134,6 @@ export_python_environment() {
 start_python_application() {
     local enable_python="${ENABLE_PYTHON:-0}"
     local python_script="${PYTHON_SCRIPT:-"${BIN_DIR}/${SOFTWARE_DIR_NAME}.py"}"
-
-    #print_info "Starting Python application..."
 
     if [[ "${enable_python}" -ne 1 ]]; then
         print_error "Python support is not enabled (ENABLE_PYTHON=${enable_python})"
@@ -158,22 +153,64 @@ start_python_application() {
     fi
     
     print_info "Executing: ${python_script} $*"
-    python3 "${python_script}" "$@"
-    local exit_code=$?
-    
-    if [[ ${exit_code} -eq 0 ]]; then
-        print_success "Application completed successfully"
+
+    local daemon_mode="${DAEMON_MODE:-0}"
+    local init_delay=1
+
+    # Check if running in daemon mode (background) or single-run mode (foreground)
+    if [[ "${daemon_mode}" -eq 1 ]]; then
+        # Daemon mode: Start in background and save PID
+        # Note: Output still goes to terminal for interactive debugging
+        # For production daemon, redirect to log: >> "${LOG_FILE}" 2>&1
+        python3 "${python_script}" "$@" &
+        local python_pid=$!
+
+        local pid_file="${PID_FILE}"
+        if [[ -n "${pid_file}" ]]; then
+            local pid_dir=$(dirname "${pid_file}")
+            if [[ ! -d "${pid_dir}" ]] || [[ ! -w "${pid_dir}" ]]; then
+                print_warning "Cannot write PID file to ${pid_file}"
+            else
+                echo "${python_pid}" > "${pid_file}" 2>/dev/null
+                if [[ $? -eq 0 ]]; then
+                    print_success "Process started with PID: ${python_pid}"
+                else
+                    print_warning "Process started (PID: ${python_pid}) couldn't write PID file"
+                fi
+            fi
+        fi
+
+        sleep "${init_delay}"
+
+        if kill -0 "${python_pid}" 2>/dev/null; then
+            print_success "Application started successfully"
+            return 0
+        else
+            print_error "Application failed to start"
+            rm -f "${pid_file}"
+            return 1
+        fi
     else
-        print_error "Application failed with exit code: ${exit_code}"
+        # Single-run mode: Run in foreground (blocking)
+        python3 "${python_script}" "$@"
+        local exit_code=$?
+        
+        if [[ ${exit_code} -eq 0 ]]; then
+            print_success "Application completed successfully"
+        else
+            print_error "Application failed with exit code: ${exit_code}"
+        fi
+        
+        return ${exit_code}
     fi
-    
-    return ${exit_code}
 }
 
 start_python_cli() {
     local enable_python="${ENABLE_PYTHON:-0}"
     local python_script="${PYTHON_SCRIPT:-"${BIN_DIR}/${SOFTWARE_DIR_NAME}.py"}"
     local cli_command="$1"
+    local exit_code
+    
     shift  # Remove first argument, rest are CLI args
 
     if [[ "${enable_python}" -ne 1 ]]; then
@@ -194,7 +231,7 @@ start_python_cli() {
     fi
     
     python3 "${python_script}" "${cli_command}" "$@"
-    local exit_code=$?
+    exit_code=$?
     
     if [[ ${exit_code} -ne 0 ]]; then
         print_error "CLI command failed with exit code: ${exit_code}"

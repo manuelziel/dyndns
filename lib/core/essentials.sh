@@ -1,10 +1,8 @@
 #!/bin/bash
-# lib/core/essentials.sh
+# lib/core/essentials.sh - Core utilities and system checks
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -28,7 +26,6 @@ check_root() {
 ################################################################################
 
 detect_package_manager() {
-    # Check in order of specificity
     if command -v apt-get &>/dev/null; then
         echo "apt"
     elif command -v dnf &>/dev/null; then
@@ -44,7 +41,6 @@ detect_package_manager() {
     fi
 }
 
-# Function to get package name for a package key from PACKAGE_MAPPINGS
 get_package_name_for_key() {
     local pkg_key="$1"
     local mapping="${PACKAGE_MAPPINGS[$pkg_key]:-}"
@@ -86,7 +82,6 @@ is_package_installed() {
     esac
 }
 
-# Check if systemd service exists
 has_systemd_service() {
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
 
@@ -130,7 +125,7 @@ check_dependencies() {
 ################################################################################ 
 
 is_installed() {
-    local install_path="${INSTALL_PATH:-"[FILE_DIR]"}"
+    local install_path="${INSTALL_PATH:-"[INSTALL_PATH]"}"
     [[ -f "$install_path" ]]
 }
 
@@ -140,7 +135,7 @@ get_installed_version() {
     if is_installed; then
         if [[ -x "${bin_symlink}" ]]; then
             local version_output
-            version_output=$("${bin_symlink}" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9]*' | head -n1 | sed 's/^v//')
+            version_output=$("${bin_symlink}" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+(-?[a-zA-Z0-9]+)?' | head -n1 | sed 's/^v//')
             if [[ -n "${version_output}" ]]; then
                 echo "${version_output}"
             else
@@ -336,8 +331,6 @@ show_daemon_status() {
         if [[ -n "${pid}" ]]; then
             echo "  Process ID: ${pid}"
             echo "  Start time: $(ps -o lstart= -p "${pid}" 2>/dev/null || echo 'unknown')"
-            echo "  CPU usage: $(ps -o %cpu= -p "${pid}" 2>/dev/null || echo 'unknown')%"
-            echo "  Memory usage: $(ps -o %mem= -p "${pid}" 2>/dev/null || echo 'unknown')%"
         fi
     else
         print_warning "${software_name} is not running"
@@ -358,11 +351,17 @@ show_requirements() {
     local service_name=${SERVICE_NAME:-"[SERVICE_NAME]"}
     local service_path=${SERVICE_PATH:-"[SERVICE_PATH]"}
     local install_path=${INSTALL_PATH}
+    local os_info="Linux"
+    
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        os_info="${PRETTY_NAME:-${NAME:-Linux}}"
+    fi
 
     print_section "System Requirements"
 
     echo "Required for ${software_name}:"
-    echo "  • Operating System: Linux with systemd"
+    echo "  • Operating System: ${os_info}"
     echo "  • Required commands: ${dependencies:-"none"}"
     echo "  • Installation path: ${install_path}"
     if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[service-name].service" ]]; then

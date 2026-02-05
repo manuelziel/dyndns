@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""
-DynDNS CLI Configuration Module
+"""DynDNS CLI configuration module for interactive zone and record management.
 
-Interactive menu system for managing DNS zones, records, and API credentials.
-Provides CRUD operations for database entities and import/export functionality.
+This module provides the ConfigMenu class for managing DNS zones, records,
+and API credentials through an interactive terminal menu system. Includes
+import/export functionality and provider synchronization.
 
-Created: 2025-10-27
+Typical usage:
+    >>> menu = ConfigMenu(config, logger)
+    >>> exit_code = menu.run()
+
 Author: Manuel Ziel
 License: MIT
 """
@@ -15,19 +18,24 @@ License: MIT
 ################################################################################
 
 # Standard library imports
+from datetime import datetime, timezone
 import getpass
 import json
 import os
-import sys
-from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-# Local imports
-from exceptions import DatabaseError, RecordNotFoundError, ZoneNotFoundError
-from network import NetworkData
-from api import ProviderDNSClient
-from colors import LOG_SYMBOLS
-from cli_helpers import (
+# Third-party imports
+import yaml
+
+# Local imports - Core
+from .core.exceptions import DatabaseError, RecordNotFoundError, ZoneNotFoundError, APIError
+from .core.constants import SyncStatus, UpdateStatus, RecordType, Subdomain, ExportFormat, PlaceholderIP
+
+# Local imports - Modules
+from .network import NetworkData
+from .api import ProviderDNSClient
+from .utils.colors import LOG_SYMBOLS
+from .cli_helpers import (
     Colors,
     get_placeholder_ip,
     row_to_dict,
@@ -37,20 +45,32 @@ from cli_helpers import (
     select_zone, select_record
 )
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
-
 ################################################################################
 # DYNDNS CONFIGURATION MENU
 ################################################################################
 
 class ConfigMenu:
-    """Interactive configuration menu for DynDNS zones and records management."""
+    """Interactive configuration menu for DynDNS zones and records management.
+
+    Provides CRUD operations for zones and DNS records, IP status display,
+    forced updates, and import/export functionality.
+
+    Attributes:
+        config: ConfigManager instance with application settings.
+        logger: Logger instance for debug and error messages.
+        db: DatabaseManager instance for zone and record operations.
+    """
     
     def __init__(self, config: Any, logger: Any) -> None:
-        """Initialize configuration menu."""
+        """Initialize configuration menu.
+
+        Args:
+            config: ConfigManager instance with database access.
+            logger: Logger instance for logging output.
+
+        Raises:
+            DatabaseError: If database is not initialized.
+        """
         self.config = config
         self.logger = logger
         self.db = config.db
@@ -59,10 +79,17 @@ class ConfigMenu:
             raise DatabaseError("Database not initialized. Run 'ionos-dyndns config' first.")
     
     def run(self) -> int:
-        """Main menu loop."""
+        """Run the main menu loop.
+
+        Displays the configuration menu and handles user input until
+        the user exits.
+
+        Returns:
+            Exit code, 0 for successful completion.
+        """
         while True:
             clear_screen()
-            #self.print_header()
+
             max_choice = self.print_menu()
             
             choice = input(f"Enter your choice (0-{max_choice}): ").strip()
@@ -100,7 +127,7 @@ class ConfigMenu:
     ################################################################################
     
     def print_header(self) -> None:
-        """Print DynDNS banner."""
+        """Print the DynDNS application banner."""
 
         #print_banner(
         #    software_name="[SOFTWARE_NAME]",
@@ -110,7 +137,11 @@ class ConfigMenu:
         #)
 
     def print_menu(self) -> None:
-        """Print main menu options."""
+        """Print main menu options and return item count.
+
+        Returns:
+            Number of available menu items for input validation.
+        """
         print_section("Configuration")
         print()
         print(f"{Colors.BLUE}Available options:{Colors.NC}")
@@ -133,7 +164,7 @@ class ConfigMenu:
     ################################################################################
     
     def manage_zones(self) -> None:
-        """Zone management submenu."""
+        """Display and handle the zone management submenu."""
         while True:
             clear_screen()
             print_section("Manage Zones")
@@ -142,12 +173,14 @@ class ConfigMenu:
             print(f"{Colors.DIM}Each zone requires provider API credentials for DynDNS updates.{Colors.NC}")
             print()
             print(f"{Colors.BLUE}Available options:{Colors.NC}")
+
             menu_items = [
                 "List all zones",
                 "Add new zone",
                 "Edit zone",
                 "Delete zone"
             ]
+
             for i, item in enumerate(menu_items, 1):
                 print(f"  {i}) {item}")
             print(f"  0) Back")
@@ -168,7 +201,7 @@ class ConfigMenu:
                 break
     
     def list_zones(self) -> None:
-        """List all configured zones."""
+        """List all configured zones with their status and record counts."""
         print_section("Current Zones")
         
         zones = self.db.get_all_zones()
@@ -212,7 +245,11 @@ class ConfigMenu:
         wait_for_enter()
     
     def add_zone(self) -> None:
-        """Add a new zone with provider credentials."""
+        """Add a new zone with provider API credentials.
+
+        Prompts for zone name, optional zone ID, and IONOS API credentials.
+        Optionally auto-fetches zone ID and creates standard DynDNS records.
+        """
         print_section("Add New Zone")
 
         zone_name = input("Zone Name (e.g., example-zone.com): ").strip()
@@ -259,6 +296,35 @@ class ConfigMenu:
             return
         
         try:
+            if not provider_zone_id:
+                print_info("Fetching Zone ID from provider...")
+                try:
+                    full_api_key = f"{bulk_id}.{api_key}"
+                    temp_client = ProviderDNSClient(
+                        api_key=full_api_key,
+                        config=self.config,
+                        logger=self.logger
+                    )
+                    
+                    provider_zones = temp_client.get_zones()
+                    if provider_zones:
+                        provider_zone = next(
+                            (pz for pz in provider_zones if pz['name'] == zone_name),
+                            None
+                        )
+                        if provider_zone:
+                            provider_zone_id = provider_zone['id']
+                            print_success(f"Zone ID fetched: {provider_zone_id}")
+                        else:
+                            print_warning(f"Zone '{zone_name}' not found at provider (available: {[pz['name'] for pz in provider_zones]})")
+                            print_info("Zone will be created locally. Zone ID can be synced later.")
+                    else:
+                        print_warning("Failed to fetch zones from provider - check API credentials")
+                        print_info("Zone will be created locally. Zone ID can be synced later.")
+                except Exception as e:
+                    print_warning(f"Auto-fetch failed: {e}")
+                    print_info("Zone will be created locally. Zone ID can be synced later.")
+            
             zone_id = self.db.add_zone(zone_name, provider_zone_id if provider_zone_id else None)
             
             self.db.set_dyndns_config(
@@ -267,15 +333,265 @@ class ConfigMenu:
                 api_key=api_key
             )
             
-            print_success(f"Zone '{zone_name}' added successfully! (ID: {zone_id})")
+            print_success(f"Zone '{zone_name}' added successfully!")
+            if provider_zone_id:
+                print_info(f"Provider Zone ID: {provider_zone_id}")
+            
+            self._prompt_create_dyndns_records(zone_id, zone_name, provider_zone_id, bulk_id, api_key)
+            
         except (ValueError, TypeError) as e:
             print_error(f"Error adding zone: {e}")
             self.logger.error(f"Failed to add zone '{zone_name}': {e}")
         
         wait_for_enter()
     
+    def _prompt_create_dyndns_records(self, zone_id: int, zone_name: str, 
+                                       provider_zone_id: Optional[str], 
+                                       bulk_id: str, api_key: str) -> None:
+        """Prompt user to create standard DynDNS records after zone creation.
+
+        Offers standard setup (@ and www) or root domain only options.
+        Creates A and/or AAAA records based on network settings.
+
+        Args:
+            zone_id: Database zone ID for the new zone.
+            zone_name: Zone name (e.g., example.com).
+            provider_zone_id: Provider zone ID, may be None.
+            bulk_id: IONOS Bulk ID for API authentication.
+            api_key: IONOS API Key for API authentication.
+        """
+        print()
+        print_section("DynDNS Records")
+        print(f"{Colors.DIM}These records will be automatically updated when your IP changes.{Colors.NC}")
+        print()
+        print(f"{Colors.BLUE}Available options:{Colors.NC}")
+        print(f"  1) Standard setup (recommended)")
+        print(f"     {Colors.DIM}Creates A + AAAA records for:{Colors.NC}")
+        print(f"     {Colors.DIM}- @ ({zone_name}){Colors.NC}")
+        print(f"     {Colors.DIM}- www (www.{zone_name}){Colors.NC}")
+        print(f"  2) Root domain only (@)")
+        print(f"     {Colors.DIM}Creates A + AAAA for {zone_name}{Colors.NC}")
+        print(f"  0) Skip")
+        print()
+        
+        choice = input(f"Enter your choice (0-2): ").strip()
+        
+        if choice == '0':
+            print_info("You can add records later via 'Records' > 'Add record'")
+            return
+        
+        if choice not in ['0', '1', '2']:
+            print_warning("Invalid choice. Skipping record creation.")
+            return
+        
+        if choice == '' or choice == '1':
+            subdomains = [Subdomain.ROOT, Subdomain.WWW]
+            setup_name = "Standard setup"
+        elif choice == '2':
+            subdomains = [Subdomain.ROOT]
+            setup_name = "Root domain only"
+        
+        if not provider_zone_id:
+            print_warning("No Provider Zone ID available - records will be created locally only.")
+            print_info("Sync with provider later to create records at IONOS.")
+            
+        print()
+        print_info("Detecting current IP addresses...")
+        
+        try:
+            network = NetworkData(config=self.config, logger=self.logger)
+            current_ipv4, current_ipv6 = network.load_current_ip_addresses()
+        except Exception as e:
+            self.logger.warning(f"IP detection failed: {e}")
+            current_ipv4 = None
+            current_ipv6 = None
+        
+        if current_ipv4:
+            print_success(f"IPv4: {current_ipv4}")
+        else:
+            print_warning("IPv4 not detected")
+            
+        if current_ipv6:
+            print_success(f"IPv6: {current_ipv6}")
+        else:
+            print_warning("IPv6 not detected")
+        
+        provider = None
+        if provider_zone_id:
+            try:
+                full_api_key = f"{bulk_id}.{api_key}"
+                provider = ProviderDNSClient(
+                    api_key=full_api_key,
+                    config=self.config,
+                    logger=self.logger
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to create provider client: {e}")
+                provider = None
+        
+        print()
+        print_info(f"Creating {setup_name} records...")
+        
+        records_created = 0
+        records_failed = 0
+        
+        for subdomain in subdomains:
+            if subdomain == Subdomain.ROOT:
+                record_name = zone_name
+                display_name = f"{Subdomain.ROOT} ({zone_name})"
+            else:
+                record_name = f"{subdomain}.{zone_name}"
+                display_name = f"{subdomain} ({record_name})"
+            
+            if self.config.network_ipv4_enabled:
+                success = self._create_single_dyndns_record(
+                    zone_id=zone_id,
+                    zone_name=zone_name,
+                    provider_zone_id=provider_zone_id,
+                    provider=provider,
+                    record_name=record_name,
+                    record_type=RecordType.A,
+                    current_ip=current_ipv4,
+                    display_name=display_name
+                )
+                if success:
+                    records_created += 1
+                else:
+                    records_failed += 1
+            
+            if self.config.network_ipv6_enabled:
+                success = self._create_single_dyndns_record(
+                    zone_id=zone_id,
+                    zone_name=zone_name,
+                    provider_zone_id=provider_zone_id,
+                    provider=provider,
+                    record_name=record_name,
+                    record_type=RecordType.AAAA,
+                    current_ip=current_ipv6,
+                    display_name=display_name
+                )
+                if success:
+                    records_created += 1
+                else:
+                    records_failed += 1
+        
+        print()
+        if records_created > 0:
+            print_success(f"{records_created} record(s) created successfully!")
+        if records_failed > 0:
+            print_warning(f"{records_failed} record(s) failed to create")
+        
+        if records_created > 0:
+            print_info("The daemon will now automatically update these records when your IP changes.")
+    
+    def _create_single_dyndns_record(self, zone_id: int, zone_name: str,
+                                      provider_zone_id: Optional[str],
+                                      provider: Optional[ProviderDNSClient],
+                                      record_name: str, record_type: str,
+                                      current_ip: Optional[str],
+                                      display_name: str) -> bool:
+        """Create a single DynDNS record (A or AAAA).
+
+        Creates the record in the local database and optionally syncs
+        with the provider if credentials are available.
+
+        Args:
+            zone_id: Database zone ID.
+            zone_name: Zone name for display purposes.
+            provider_zone_id: Provider zone ID, may be None.
+            provider: Provider client instance, may be None.
+            record_name: Full record name (e.g., example.com or www.example.com).
+            record_type: Record type, either 'A' or 'AAAA'.
+            current_ip: Current IP address to set, may be None.
+            display_name: Display name for user output.
+
+        Returns:
+            True if record was created successfully, False otherwise.
+        """
+        ttl = self.config.dns_default_ttl
+        
+        existing = self.db.get_record_by_name_and_type(zone_id, record_name, record_type)
+        if existing:
+            print_info(f"  {display_name} {record_type}: Already exists, skipping")
+            return True
+        
+        if current_ip:
+            ip_to_use = current_ip
+        else:
+            ip_to_use = get_placeholder_ip(record_type)
+            
+        try:
+            provider_record_id = None
+            sync_status = SyncStatus.LOCAL_ONLY
+            
+            if provider and provider_zone_id:
+                try:
+                    existing_provider_id = provider.find_record_id(
+                        zone_id=provider_zone_id,
+                        record_name=record_name,
+                        record_type=record_type
+                    )
+                    
+                    if existing_provider_id:
+                        provider_record_id = existing_provider_id
+                        sync_status = SyncStatus.SYNCED
+                        print_info(f"  {display_name} {record_type}: Found at provider, importing...")
+                    else:
+                        api_record = provider.build_record_dict(
+                            record_name=record_name,
+                            record_type=record_type,
+                            content=ip_to_use,
+                            ttl=ttl,
+                            disabled=False
+                        )
+                        
+                        success = provider.create_records(
+                            zone_id=provider_zone_id,
+                            records=[api_record]
+                        )
+                        
+                        if success:
+                            provider_record_id = provider.find_record_id(
+                                zone_id=provider_zone_id,
+                                record_name=record_name,
+                                record_type=record_type
+                            )
+                            sync_status = SyncStatus.SYNCED if provider_record_id else SyncStatus.PENDING_SYNC
+                            
+                except Exception as e:
+                    self.logger.warning(f"Provider operation failed for {record_name} {record_type}: {e}")
+            
+            record_id = self.db.add_record(
+                zone_id=zone_id,
+                record_name=record_name,
+                record_type=record_type,
+                provider_record_id=provider_record_id,
+                ttl=ttl,
+                enabled=True,
+                managed=True,
+                sync_status=sync_status
+            )
+            
+            if current_ip and current_ip != get_placeholder_ip(record_type):
+                self.db.update_ip_address(record_id, current_ip)
+            
+            if sync_status == SyncStatus.SYNCED:
+                print_success(f"  {display_name} {record_type}: Created and synced with provider")
+            else:
+                print_success(f"  {display_name} {record_type}: Created locally")
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create record {record_name} ({record_type}): {e}")
+            print_error(f"  {display_name} {record_type}: Failed - {e}")
+            return False
+
     def edit_zone(self) -> None:
-        """Edit an existing zone."""
+        """Edit an existing zone's settings.
+
+        Allows editing zone ID, API credentials, or enable/disable status.
+        """
         print_section("Edit Zone")
         
         zone = select_zone(self.db, prompt="Select zone to edit")
@@ -293,11 +609,13 @@ class ConfigMenu:
         print(f"\n{Colors.BOLD}What to edit?{Colors.NC}")
         print()
         print(f"{Colors.BLUE}Available options:{Colors.NC}")
+
         menu_items = [
             "Update Zone ID",
             "Update API Credentials (Bulk ID + API Key)",
             "Enable/Disable Zone"
         ]
+
         for i, item in enumerate(menu_items, 1):
             print(f"  {i}) {item}")
         print(f"  0) Cancel")
@@ -341,7 +659,11 @@ class ConfigMenu:
         wait_for_enter()
     
     def delete_zone(self) -> None:
-        """Delete a zone (with confirmation)."""
+        """Delete a zone with confirmation.
+
+        Requires typing the zone name to confirm deletion. Removes zone,
+        all associated records, IP history, and update history.
+        """
         print_section("Delete Zone")
         
         zone = select_zone(self.db, prompt="Select zone to DELETE")
@@ -377,7 +699,7 @@ class ConfigMenu:
     ################################################################################
     
     def manage_records(self) -> None:
-        """Record management submenu."""
+        """Display and handle the record management submenu."""
         while True:
             clear_screen()
             print_section("Manage DNS Records")
@@ -386,6 +708,7 @@ class ConfigMenu:
             print(f"{Colors.DIM}Each record will be automatically updated with your current IP address.{Colors.NC}")
             print()
             print(f"{Colors.BLUE}Available options:{Colors.NC}")
+
             menu_items = [
                 "List all records",
                 "Add new record",
@@ -393,6 +716,7 @@ class ConfigMenu:
                 "Delete record",
                 "Sync records from provider"
             ]
+
             for i, item in enumerate(menu_items, 1):
                 print(f"  {i}) {item}")
             print(f"  0) Back")
@@ -415,7 +739,7 @@ class ConfigMenu:
                 break
     
     def list_records(self) -> None:
-        """List DNS records by zone."""
+        """List DNS records by zone with current IP addresses."""
         print_section("DNS Records")
         
         zones = self.db.get_all_zones()
@@ -455,7 +779,7 @@ class ConfigMenu:
             zone_choice = int(zone_choice_str)
             
             if zone_choice < 1 or zone_choice > len(zones_list):
-                print_error(f"Please select 1-{len(zones_list)}")
+                print_error(f"Select 1-{len(zones_list)}")
                 wait_for_enter()
                 return
             
@@ -491,7 +815,11 @@ class ConfigMenu:
         wait_for_enter()
     
     def add_record(self) -> None:
-        """Add a new DNS record/subdomain - PROVIDER-FIRST approach."""
+        """Add a new DNS record using provider-first approach.
+
+        Creates record at provider first, then stores in local database
+        with provider_record_id for synchronization.
+        """
         print_section("Add DNS Record")
         
         zone = select_zone(self.db, prompt="Select zone")
@@ -514,7 +842,7 @@ class ConfigMenu:
         
         subdomain = input(f"\n{Colors.BOLD}Enter subdomain{Colors.NC} (or @ for root): ").strip()
         
-        if subdomain in ['@', '']:
+        if subdomain in [Subdomain.ROOT, '']:
             record_name = zone_name
             print(f"{Colors.DIM}{LOG_SYMBOLS['ARROW']} Creating root record: {Colors.CYAN}{record_name}{Colors.NC}")
         else:
@@ -523,7 +851,7 @@ class ConfigMenu:
         
         print()
         record_type = input(f"{Colors.BOLD}Record Type{Colors.NC} (A for IPv4, AAAA for IPv6) [A]: ").strip().upper()
-        record_type = record_type if record_type in ['A', 'AAAA'] else 'A'
+        record_type = record_type if RecordType.is_supported(record_type) else RecordType.A
         
         existing_record = self.db.get_record_by_name_and_type(zone['id'], record_name, record_type)
         if existing_record:
@@ -545,11 +873,9 @@ class ConfigMenu:
             wait_for_enter()
             return
         
-        # Get provider client with credentials validation
         provider = self._get_provider_with_credentials(zone, warn_on_missing=True, require_zone_id=True)
         
         if not provider:
-            # Fallback: Create in database only (local mode)
             print_info("Record will be created in database only (local mode).")
             if not confirm_action("Continue without provider sync?", default=False):
                 print_info("Cancelled.")
@@ -563,7 +889,7 @@ class ConfigMenu:
                     record_type=record_type,
                     ttl=ttl,
                     managed=True,
-                    sync_status='local_only'
+                    sync_status=SyncStatus.LOCAL_ONLY
                 )
                 print_success(f"Record added locally! (ID: {record_id})")
                 print_warning("Note: Record not created at provider. Configure API credentials to sync.")
@@ -574,7 +900,6 @@ class ConfigMenu:
             wait_for_enter()
             return
         
-        # Check if record already exists at provider
         print_info("Checking if record exists at provider...")
         existing_provider_record_id = provider.find_record_id(
             zone_id=zone['provider_zone_id'],
@@ -588,7 +913,6 @@ class ConfigMenu:
             
             if confirm_action("Import this existing record to database?", default=True):
                 try:
-                    # Add existing record to database
                     record_id = self.db.add_record(
                         zone_id=zone['id'],
                         record_name=record_name,
@@ -597,18 +921,17 @@ class ConfigMenu:
                         ttl=ttl,
                         enabled=True,
                         managed=True,
-                        sync_status='synced'
+                        sync_status=SyncStatus.SYNCED
                     )
                     print_success(f"Existing record imported! (ID: {record_id})")
                     
-                    # Try to get and store current IP from provider's zone records
                     try:
                         provider_zone_records = provider.get_zone_records(zone['provider_zone_id'])
                         if provider_zone_records:
                             for rec in provider_zone_records:
                                 if rec.get('id') == existing_provider_record_id:
                                     current_ip = rec.get('content', '')
-                                    if current_ip and current_ip not in ["0.0.0.0", "::"]:
+                                    if current_ip and current_ip not in [PlaceholderIP.IPV4, PlaceholderIP.IPV6]:
                                         self.db.update_ip_address(record_id, current_ip)
                                         print_info(f"Current IP stored: {current_ip}")
                                     break
@@ -625,36 +948,23 @@ class ConfigMenu:
             wait_for_enter()
             return
         
-        # Provider-First: Create at provider first
         try:
-            # Detect current IP address first
             print_info(f"Detecting current IP address...")
-            network = NetworkData()
-            network.setup(
-                ipv4_enabled=self.config.network_ipv4_enabled,
-                ipv6_enabled=self.config.network_ipv6_enabled,
-                ipv4_detection_url=self.config.network_ipv4_detection_url,
-                ipv6_detection_url=self.config.network_ipv6_detection_url,
-                timeout=self.config.network_timeout,
-                retry_attempts=self.config.network_retry_attempts,
-                logger=self.logger
-            )
-            
+            network = NetworkData(config=self.config, logger=self.logger)
             current_ipv4, current_ipv6 = network.load_current_ip_addresses()
             
-            # Get appropriate IP for record type
-            if record_type == 'A':
+            if record_type == RecordType.A:
                 current_ip = current_ipv4
                 if not current_ip:
-                    placeholder = get_placeholder_ip('A')
+                    placeholder = get_placeholder_ip(RecordType.A)
                     print_warning(f"IPv4 not detected! Using placeholder {placeholder}")
                     current_ip = placeholder
                 else:
                     print_success(f"Using IPv4: {current_ip}")
-            else:  # AAAA
+            else:
                 current_ip = current_ipv6
                 if not current_ip:
-                    placeholder = get_placeholder_ip('AAAA')
+                    placeholder = get_placeholder_ip(RecordType.AAAA)
                     print_warning(f"IPv6 not detected! Using placeholder {placeholder}")
                     current_ip = placeholder
                 else:
@@ -662,7 +972,6 @@ class ConfigMenu:
             
             print_info(f"Creating record at provider...")
             
-            # Build API record using provider helper
             api_record = provider.build_record_dict(
                 record_name=record_name,
                 record_type=record_type,
@@ -671,32 +980,28 @@ class ConfigMenu:
                 disabled=False
             )
             
-            # Create at provider
             success = provider.create_records(
                 zone_id=zone['provider_zone_id'],
                 records=[api_record]
             )
             
             if not success:
-                raise ValueError("Provider record creation failed")
+                raise APIError("Provider record creation failed")
             
             print_success(f"Record created at provider!")
             
-            # Sync to get provider_record_id
             print_info(f"Syncing to retrieve provider record ID...")
             sync_stats = self._sync_zone_with_provider(zone, provider)
             
-            if not sync_stats or sync_stats.get('synced', 0) == 0:
+            if not sync_stats or sync_stats.get(SyncStatus.SYNCED, 0) == 0:
                 print_warning("Warning: Could not retrieve provider_record_id via sync")
             
-            # Find provider_record_id using provider helper
             provider_record_id = provider.find_record_id(
                 zone_id=zone['provider_zone_id'],
                 record_name=record_name,
                 record_type=record_type
             )
             
-            # Add to local database with provider_record_id
             record_id = self.db.add_record(
                 zone_id=zone['id'],
                 record_name=record_name,
@@ -705,11 +1010,10 @@ class ConfigMenu:
                 ttl=ttl,
                 enabled=True,
                 managed=True,
-                sync_status='synced'
+                sync_status=SyncStatus.SYNCED
             )
             
-            # Store current IP in database (if not placeholder)
-            if current_ip not in ["0.0.0.0", "::"]:
+            if current_ip not in [PlaceholderIP.IPV4, PlaceholderIP.IPV6]:
                 self.db.update_ip_address(record_id, current_ip)
                 print_success(f"IP address stored: {current_ip}")
             
@@ -728,7 +1032,10 @@ class ConfigMenu:
         wait_for_enter()
     
     def edit_record(self) -> None:
-        """Edit an existing DNS record."""
+        """Edit an existing DNS record's TTL or enabled status.
+
+        Supports bidirectional sync with provider for enable/disable.
+        """
         print_section("Edit Record")
         zone = select_zone(self.db, prompt="Select zone")
         if not zone:
@@ -783,15 +1090,12 @@ class ConfigMenu:
             if new_ttl and new_ttl != current_ttl:
                 if confirm_action(f"Update TTL to {new_ttl} seconds?", default=False):
                     try:
-                        # Update database first
                         self.db.update_record(record['id'], ttl=new_ttl)
                         print_success(f"TTL updated to {new_ttl} seconds in database!")
                         
-                        # Ask if user wants to sync to provider immediately
                         print()
                         print_info("TTL change will be applied at provider during next DNS update.")
                         if confirm_action("Sync TTL to provider immediately?", default=False):
-                            # Get provider client with credentials
                             provider = self._get_provider_with_credentials(zone, warn_on_missing=True, require_zone_id=True)
                             
                             if not provider:
@@ -799,11 +1103,10 @@ class ConfigMenu:
                             else:
                                 try:
                                     if not record.get('provider_record_id'):
-                                        raise ValueError("Record has no provider_record_id")
+                                        raise APIError("Record has no provider_record_id")
                                     
-                                    # Get current IP for the record
                                     ip_info_row = self.db.get_ip_address(record['id'])
-                                    current_ip = "0.0.0.0"  # Default fallback
+                                    current_ip = PlaceholderIP.IPV4
                                     
                                     if ip_info_row:
                                         ip_info = row_to_dict(ip_info_row)
@@ -812,7 +1115,6 @@ class ConfigMenu:
                                     
                                     print_info(f"Updating TTL at provider...")
                                     
-                                    # Update record at provider with new TTL
                                     success = provider.update_record(
                                         zone_id=zone['provider_zone_id'],
                                         record_id=record['provider_record_id'],
@@ -857,11 +1159,9 @@ class ConfigMenu:
                 wait_for_enter()
                 return
             
-            # Get provider client with credentials
             provider = self._get_provider_with_credentials(zone, warn_on_missing=True, require_zone_id=True)
             
             if not provider:
-                # Fallback: Update database only (local mode)
                 print_info("Record will be updated in database only (local mode).")
                 if not confirm_action("Continue without provider sync?", default=False):
                     print_info("Cancelled.")
@@ -882,13 +1182,10 @@ class ConfigMenu:
             # Bidirectional sync with provider
             try:
                 if new_status:
-                    # ENABLE: Recreate record at provider with current IP
                     print_info(f"Enabling: Creating record at provider...")
                     
-                    # Step 1: Get current IP (from DB or detect)
                     current_ip = self._get_current_or_detect_ip(record)
                     
-                    # Step 2: Create record at provider
                     api_record = provider.build_record_dict(
                         record_name=record['record_name'],
                         record_type=record['record_type'],
@@ -903,11 +1200,10 @@ class ConfigMenu:
                     )
                     
                     if not success:
-                        raise ValueError("Failed to recreate record at provider")
+                        raise APIError("Failed to recreate record at provider")
                     
                     print_success(f"Record created at provider with IP {current_ip}!")
                     
-                    # Step 3: Sync to retrieve new provider_record_id
                     sync_stats = self._sync_zone_with_provider(zone, provider)
                     
                     new_provider_record_id = provider.find_record_id(
@@ -920,7 +1216,7 @@ class ConfigMenu:
                         record['id'],
                         enabled=True,
                         provider_record_id=new_provider_record_id,
-                        sync_status='synced'
+                        sync_status=SyncStatus.SYNCED
                     )
                     
                     if new_provider_record_id:
@@ -945,7 +1241,7 @@ class ConfigMenu:
                         record['id'],
                         enabled=False,
                         provider_record_id=None,
-                        sync_status='local_only'
+                        sync_status=SyncStatus.LOCAL_ONLY
                     )
                     
                     print_success(f"Record disabled! (kept in database for history)")
@@ -963,7 +1259,11 @@ class ConfigMenu:
         wait_for_enter()
     
     def delete_record(self) -> None:
-        """Delete a DNS record from database AND provider."""
+        """Delete a DNS record from database and provider.
+
+        Removes record from both local database and DNS provider.
+        Also deletes associated IP address and update history.
+        """
         print_section("Delete Record")
         zone = select_zone(self.db, prompt="Select zone")
         if not zone:
@@ -987,7 +1287,6 @@ class ConfigMenu:
             return
         
         try:
-            # Step 1: Delete from provider if provider_record_id exists
             if record.get('provider_record_id'):
                 provider = self._get_provider_with_credentials(zone, warn_on_missing=False, require_zone_id=False)
                 
@@ -1000,7 +1299,6 @@ class ConfigMenu:
                 else:
                     print_warning(f"Cannot delete from provider (missing credentials or zone ID)")
             
-            # Step 2: Delete from database (cascades to IP history and update logs)
             self.db.delete_record(record['id'])
             print_success(f"Record '{record['record_name']}' deleted successfully!")
             
@@ -1061,10 +1359,10 @@ class ConfigMenu:
             local_records_dict = {row_to_dict(r)['id']: row_to_dict(r) for r in local_records}
             
             stats = {
-                'synced': 0,
-                'new': 0,
-                'orphaned': 0,
-                'updated': 0
+                SyncStatus.SYNCED: 0,
+                SyncStatus.NEW: 0,
+                SyncStatus.ORPHANED: 0,
+                SyncStatus.UPDATED: 0
             }
             
             # Track which local records were found at provider
@@ -1078,7 +1376,6 @@ class ConfigMenu:
                 provider_type = provider_record['type']
                 provider_id = provider_record['id']
                 
-                # Find matching local record by name and type
                 matched = False
                 for local_id, local_record in local_records_dict.items():
                     if (local_record['record_name'] == provider_name and 
@@ -1086,58 +1383,55 @@ class ConfigMenu:
                         matched = True
                         matched_local_ids.add(local_id)
                         
-                        # Update database with current provider_record_id and sync status
                         update_needed = False
                         if local_record.get('provider_record_id') != provider_id:
                             update_needed = True
-                        if local_record.get('sync_status') != 'synced':
+                        if local_record.get('sync_status') != SyncStatus.SYNCED:
                             update_needed = True
                         
                         if update_needed:
                             self.db.update_record(
                                 local_id,
                                 provider_record_id=provider_id,
-                                sync_status='synced',
+                                sync_status=SyncStatus.SYNCED,
                                 last_synced_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             )
-                            stats['updated'] += 1
+                            stats[SyncStatus.UPDATED] += 1
                             print_success(f"  {LOG_SYMBOLS['SUCCESS']} Synced: {provider_name} ({provider_type})")
                         else:
-                            stats['synced'] += 1
+                            stats[SyncStatus.SYNCED] += 1
                         
                         break
                 
                 if not matched:
-                    stats['new'] += 1
+                    stats[SyncStatus.NEW] += 1
                     print_info(f"  {LOG_SYMBOLS['INFO']} New at provider: {provider_name} ({provider_type}) - ID: {provider_id}")
             
-            # Check for orphaned local records (not found at provider)
             for local_id, local_record in local_records_dict.items():
                 if local_id not in matched_local_ids:
-                    # This record exists locally but not at provider
-                    if local_record.get('sync_status') != 'orphaned':
+                    if local_record.get('sync_status') != SyncStatus.ORPHANED:
                         self.db.update_sync_status(
                             local_id,
-                            sync_status='orphaned',
+                            sync_status=SyncStatus.ORPHANED,
                             last_synced_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         )
-                    stats['orphaned'] += 1
+                    stats[SyncStatus.ORPHANED] += 1
                     print_warning(f"  {LOG_SYMBOLS['WARNING']} Orphaned: {local_record['record_name']} ({local_record['record_type']}) - Not found at provider")
             
             print()
             print_subsection("Sync Statistics")
-            print(f"  {Colors.GREEN}{LOG_SYMBOLS['SUCCESS']} Already synced:{Colors.NC}  {stats['synced']}")
-            print(f"  {Colors.GREEN}{LOG_SYMBOLS['SUCCESS']} Updated:{Colors.NC}         {stats['updated']}")
-            print(f"  {Colors.BLUE}{LOG_SYMBOLS['INFO']} New at provider:{Colors.NC} {stats['new']}")
-            print(f"  {Colors.YELLOW}{LOG_SYMBOLS['WARNING']} Orphaned:{Colors.NC}        {stats['orphaned']}")
+            print(f"  {Colors.GREEN}{LOG_SYMBOLS['SUCCESS']} Already synced:{Colors.NC}  {stats[SyncStatus.SYNCED]}")
+            print(f"  {Colors.GREEN}{LOG_SYMBOLS['SUCCESS']} Updated:{Colors.NC}         {stats[SyncStatus.UPDATED]}")
+            print(f"  {Colors.BLUE}{LOG_SYMBOLS['INFO']} New at provider:{Colors.NC} {stats[SyncStatus.NEW]}")
+            print(f"  {Colors.YELLOW}{LOG_SYMBOLS['WARNING']} Orphaned:{Colors.NC}        {stats[SyncStatus.ORPHANED]}")
             print()
             
-            if stats['new'] > 0:
+            if stats[SyncStatus.NEW] > 0:
                 print_info("Note: 'New at provider' records exist remotely but not locally.")
                 print_info("      Use 'Add record' to import them if needed.")
                 print()
             
-            if stats['orphaned'] > 0:
+            if stats[SyncStatus.ORPHANED] > 0:
                 print_warning("Warning: 'Orphaned' records exist locally but not at provider.")
                 print_warning("         They may have been deleted remotely.")
                 print()
@@ -1161,17 +1455,7 @@ class ConfigMenu:
         """View current IP addresses for all records."""        
         print_subsection("Detecting Current IP Addresses")
         
-        network = NetworkData()
-        network.setup(
-            ipv4_enabled=self.config.network_ipv4_enabled,
-            ipv6_enabled=self.config.network_ipv6_enabled,
-            ipv4_detection_url=self.config.network_ipv4_detection_url,
-            ipv6_detection_url=self.config.network_ipv6_detection_url,
-            timeout=self.config.network_timeout,
-            retry_attempts=self.config.network_retry_attempts,
-            logger=self.logger
-        )
-        
+        network = NetworkData(config=self.config, logger=self.logger)
         current_ipv4, current_ipv6 = network.load_current_ip_addresses()
         
         if current_ipv4:
@@ -1184,7 +1468,6 @@ class ConfigMenu:
         else:
             print_warning("IPv6: Not detected")
         
-        # Display stored IPs per zone/record
         zones = self.db.get_all_zones()
         
         print_subsection("Stored DNS Record IPs")
@@ -1212,21 +1495,17 @@ class ConfigMenu:
                         if ip_info.get('ip_address'):
                             changed_at = ip_info.get('last_changed_at', 'N/A')
                             
-                            # Compare with current network IP
                             record_type = record['record_type']
                             stored_ip = ip_info['ip_address']
-                            current_ip = current_ipv4 if record_type == 'A' else current_ipv6
+                            current_ip = current_ipv4 if record_type == RecordType.A else current_ipv6
                             
                             if current_ip and stored_ip != current_ip:
-                                # IP mismatch - needs update
                                 print(f"  {record['record_name']:<40s} {record_type:5s} {Colors.YELLOW}{LOG_SYMBOLS['WARNING']} {stored_ip} (outdated, current: {current_ip}){Colors.NC}")
                             else:
-                                # IP matches or current IP not available
                                 print(f"  {record['record_name']:<40s} {record_type:5s} {Colors.GREEN}{LOG_SYMBOLS['SUCCESS']} {stored_ip}{Colors.NC} (changed: {changed_at})")
                     else:
                         print(f"  {record['record_name']:<40s} {record['record_type']:5s} {Colors.DIM}○ (no IP stored yet){Colors.NC}")
         
-        # If no records were found at all
         if not has_any_records:
             print_info("No records configured for any zone.")
         
@@ -1253,9 +1532,8 @@ class ConfigMenu:
             wait_for_enter()
             return
         
-        # Optional: Sync zones from provider first
         print()
-        if confirm_action("Sync records with provider first? (Recommended to detect orphaned records)", default=True):
+        if confirm_action("Sync records with provider first?", default=True):
             print_subsection("Pre-Sync: Syncing Zones from Provider")
             zones_to_sync = self.db.get_all_enabled_zones()
             
@@ -1268,7 +1546,6 @@ class ConfigMenu:
                 for zone_row in zones_to_sync:
                     zone = row_to_dict(zone_row)
                     
-                    # Get provider with credentials
                     provider = self._get_provider_with_credentials(
                         zone=zone,
                         warn_on_missing=False,
@@ -1279,11 +1556,11 @@ class ConfigMenu:
                         print_info(f"Syncing zone: {zone['zone_name']}...")
                         sync_stats = self._sync_zone_with_provider(zone, provider)
                         
-                        if sync_stats and sync_stats.get('synced', 0) > 0:
-                            synced_count += sync_stats.get('synced', 0)
+                        if sync_stats and sync_stats.get(SyncStatus.SYNCED, 0) > 0:
+                            synced_count += sync_stats.get(SyncStatus.SYNCED, 0)
                             print_success(
                                 f"{zone['zone_name']}: "
-                                f"{sync_stats.get('synced', 0)} records synced"
+                                f"{sync_stats.get(SyncStatus.SYNCED, 0)} records synced"
                             )
                         else:
                             failed_count += 1
@@ -1316,22 +1593,16 @@ class ConfigMenu:
         wait_for_enter()
     
     def _detect_ip_addresses(self) -> Optional[NetworkData]:
-        """Detect current public IP addresses."""
+        """Detect current public IP addresses.
+
+        Returns:
+            NetworkData instance with detected IPs, or None if detection failed.
+        """
 
         print_subsection("Detecting Current IP Addresses")
         
         try:
-            network = NetworkData()
-            network.setup(
-                ipv4_enabled=self.config.network_ipv4_enabled,
-                ipv6_enabled=self.config.network_ipv6_enabled,
-                ipv4_detection_url=self.config.network_ipv4_detection_url,
-                ipv6_detection_url=self.config.network_ipv6_detection_url,
-                timeout=self.config.network_timeout,
-                retry_attempts=self.config.network_retry_attempts,
-                logger=self.logger
-            )
-            
+            network = NetworkData(config=self.config, logger=self.logger)
             network.load_current_ip_addresses()
             
             if network.ipv4_address:
@@ -1356,13 +1627,21 @@ class ConfigMenu:
             return None
     
     def _process_all_zones(self, zones: List[Any], network: NetworkData) -> Dict[str, int]:
-        """Process all zones and update DNS records."""
+        """Process all zones and update DNS records.
+
+        Args:
+            zones: List of zone database rows.
+            network: NetworkData instance with current IP addresses.
+
+        Returns:
+            Dictionary with update statistics (total, updated, failed, skipped).
+        """
 
         stats = {
-            'total': 0,
-            'updated': 0,
-            'failed': 0,
-            'skipped': 0
+            UpdateStatus.TOTAL: 0,
+            UpdateStatus.UPDATED: 0,
+            UpdateStatus.FAILED: 0,
+            UpdateStatus.SKIPPED: 0
         }
         
         for zone_row in zones:
@@ -1394,15 +1673,21 @@ class ConfigMenu:
         return stats
     
     def _create_provider_client(self, zone: Dict[str, Any], dyndns: Dict[str, Any]) -> Optional[ProviderDNSClient]:
-        """Create and setup provider API client."""
+        """Create provider API client from zone credentials.
+
+        Args:
+            zone: Zone dictionary with zone information.
+            dyndns: DynDNS config dictionary with API credentials.
+
+        Returns:
+            ProviderDNSClient instance or None if creation failed.
+        """
         try:
             api_key = f"{dyndns['bulk_id']}.{dyndns['api_key']}"
             
             provider = ProviderDNSClient(
                 api_key=api_key,
-                base_url=self.config.provider_api_base_url,
-                timeout=self.config.provider_api_timeout,
-                retries=self.config.provider_api_retry_attempts,
+                config=self.config,
                 logger=self.logger
             )
             return provider
@@ -1414,7 +1699,16 @@ class ConfigMenu:
     
     def _get_provider_with_credentials(self, zone: Dict[str, Any], warn_on_missing: bool = True, 
                                        require_zone_id: bool = True) -> Optional[ProviderDNSClient]:
-        """Get provider client with credentials validation."""
+        """Get provider client with credentials validation.
+
+        Args:
+            zone: Zone dictionary to get credentials for.
+            warn_on_missing: If True, display warnings for missing credentials.
+            require_zone_id: If True, auto-sync provider_zone_id if missing.
+
+        Returns:
+            ProviderDNSClient instance or None if validation failed.
+        """
         dyndns_config = self.db.get_dyndns_config_by_zone(zone['id'])
         if not dyndns_config:
             if warn_on_missing:
@@ -1422,7 +1716,6 @@ class ConfigMenu:
                 print_info("Configure API credentials to enable provider sync.")
             return None
         
-        # Create provider client
         dyndns = row_to_dict(dyndns_config)
         provider = self._create_provider_client(zone, dyndns)
         
@@ -1452,11 +1745,19 @@ class ConfigMenu:
         return provider
     
     def _sync_zone_id(self, zone: Dict[str, Any], provider: ProviderDNSClient) -> bool:
-        """Sync provider_zone_id for a zone by fetching from provider API."""
+        """Sync provider_zone_id for a zone by fetching from provider API.
+
+        Args:
+            zone: Zone dictionary to sync.
+            provider: ProviderDNSClient instance for API calls.
+
+        Returns:
+            True if sync successful, False otherwise.
+        """
         try:
             provider_zones = provider.get_zones()
             if not provider_zones:
-                raise ValueError("Failed to fetch zones from provider")
+                raise APIError("Failed to fetch zones from provider")
             
             provider_zone = next(
                 (pz for pz in provider_zones if pz['name'] == zone['zone_name']),
@@ -1464,7 +1765,7 @@ class ConfigMenu:
             )
             
             if not provider_zone:
-                raise ValueError(f"Zone '{zone['zone_name']}' not found in provider")
+                raise ZoneNotFoundError(f"Zone '{zone['zone_name']}' not found in provider")
             
             self.db.update_zone(zone['id'], provider_zone_id=provider_zone['id'])
             
@@ -1472,32 +1773,36 @@ class ConfigMenu:
             self.logger.info(f"Synced provider_zone_id for zone {zone['zone_name']}: {provider_zone['id']}")
             return True
             
-        except (ValueError, KeyError, TypeError) as e:
+        except (APIError, ZoneNotFoundError, KeyError, TypeError) as e:
             print_error(f"Zone sync failed: {e}")
             self.logger.error(f"Failed to sync zone {zone['zone_name']}: {e}")
             return False
     
     def _sync_zone_with_provider(self, zone: Dict[str, Any], provider: ProviderDNSClient) -> Dict[str, int]:
-        """Sync all records in a zone with provider to update provider_record_ids."""
-        stats = {'synced': 0, 'failed': 0}
+        """Sync all records in a zone with provider to update provider_record_ids.
+
+        Args:
+            zone: Zone dictionary with provider_zone_id.
+            provider: ProviderDNSClient instance for API calls.
+
+        Returns:
+            Dictionary with sync statistics (synced count, failed count).
+        """
+        stats = {SyncStatus.SYNCED: 0, UpdateStatus.FAILED: 0}
         
         try:
             if not zone.get('provider_zone_id'):
-                raise ValueError(f"Zone '{zone['zone_name']}' has no provider_zone_id")
+                raise APIError(f"Zone '{zone['zone_name']}' has no provider_zone_id")
             
-            # Fetch all records from provider
             provider_records = provider.get_zone_records(zone['provider_zone_id'])
             if not provider_records:
-                raise ValueError("Failed to fetch records from provider")
+                raise APIError("Failed to fetch records from provider")
             
-            # Get all local records for this zone
             local_records = self.db.get_records_by_zone(zone['id'], enabled_only=False)
             
-            # Update provider_record_ids for matching records
             for local_record_row in local_records:
                 local_record = row_to_dict(local_record_row)
                 
-                # Find matching provider record by name and type
                 matched = False
                 for provider_record in provider_records:
                     if (provider_record['name'] == local_record['record_name'] and 
@@ -1505,15 +1810,14 @@ class ConfigMenu:
                         self.db.update_record(
                             local_record['id'],
                             provider_record_id=provider_record['id'],
-                            sync_status='synced',
+                            sync_status=SyncStatus.SYNCED,
                             last_synced_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         )
-                        stats['synced'] += 1
+                        stats[SyncStatus.SYNCED] += 1
                         matched = True
                         break
                 
                 if not matched:
-                    # Record exists in DB but not at provider → Mark as orphaned
                     if local_record.get('provider_record_id'):
                         self.logger.info(
                             f"Record '{local_record['record_name']}' ({local_record['record_type']}) "
@@ -1522,11 +1826,11 @@ class ConfigMenu:
                         self.db.update_record(
                             local_record['id'],
                             provider_record_id=None,
-                            sync_status='orphaned'
+                            sync_status=SyncStatus.ORPHANED
                         )
-                    stats['failed'] += 1
+                    stats[UpdateStatus.FAILED] += 1
             
-            self.logger.info(f"Synced {stats['synced']} records for zone '{zone['zone_name']}' ({stats['failed']} not found)")
+            self.logger.info(f"Synced {stats[SyncStatus.SYNCED]} records for zone '{zone['zone_name']}' ({stats[UpdateStatus.FAILED]} not found)")
             return stats
             
         except ZoneNotFoundError as e:
@@ -1537,14 +1841,21 @@ class ConfigMenu:
             return {}
     
     def _process_zone_records(self, zone: Dict[str, Any], provider: ProviderDNSClient, network: NetworkData, stats: Dict[str, int]) -> None:
-        """Process all records for a specific zone."""
+        """Process all records for a specific zone.
+
+        Args:
+            zone: Zone dictionary with zone information.
+            provider: ProviderDNSClient instance for API calls.
+            network: NetworkData instance with current IP addresses.
+            stats: Statistics dictionary to update with results.
+        """
         records = self.db.get_records_by_zone(zone['id'], enabled_only=True)
         if not records:
             return
         
         for record_row in records:
             record = row_to_dict(record_row)
-            stats['total'] += 1
+            stats[UpdateStatus.TOTAL] += 1
             
             new_ip = self._get_target_ip(record, network)
             if not new_ip:
@@ -1552,25 +1863,33 @@ class ConfigMenu:
                     f"  {LOG_SYMBOLS['ERROR']} {record['record_name']} ({record['record_type']}) - "
                     f"No IP available"
                 )
-                stats['skipped'] += 1
+                stats[UpdateStatus.SKIPPED] += 1
                 continue
             
             old_ip = self._get_current_ip(record)
             
             if not self._ensure_provider_record_id(record, provider):
-                stats['failed'] += 1
+                stats[UpdateStatus.FAILED] += 1
                 continue
             
             if self._update_dns_record(record, provider, old_ip, new_ip):
-                stats['updated'] += 1
+                stats[UpdateStatus.UPDATED] += 1
             else:
-                stats['failed'] += 1
+                stats[UpdateStatus.FAILED] += 1
     
     def _get_target_ip(self, record: Dict[str, Any], network: NetworkData) -> Optional[str]:
-        """Get target IP address for record type."""
-        if record['record_type'] == 'A':
+        """Get target IP address for record type.
+
+        Args:
+            record: Record dictionary with record_type.
+            network: NetworkData instance with current IP addresses.
+
+        Returns:
+            IPv4 or IPv6 address string, or None if unavailable.
+        """
+        if record['record_type'] == RecordType.A:
             return network.ipv4_address
-        elif record['record_type'] == 'AAAA':
+        elif record['record_type'] == RecordType.AAAA:
             return network.ipv6_address
         else:
             print_warning(
@@ -1580,7 +1899,14 @@ class ConfigMenu:
             return None
     
     def _get_current_ip(self, record: Dict[str, Any]) -> Optional[str]:
-        """Get current IP from database for record."""
+        """Get current IP from database for record.
+
+        Args:
+            record: Record dictionary with record ID.
+
+        Returns:
+            Current IP address string or None if not found.
+        """
         ip_info_row = self.db.get_ip_address(record['id'])
         if ip_info_row:
             ip_info = row_to_dict(ip_info_row)
@@ -1588,23 +1914,30 @@ class ConfigMenu:
         return None
     
     def _get_current_or_detect_ip(self, record: Dict[str, Any]) -> str:
-        """Get current IP from database or detect new IP address."""
+        """Get current IP from database or detect new IP address.
+
+        Falls back to placeholder if detection fails.
+
+        Args:
+            record: Record dictionary with record_type and ID.
+
+        Returns:
+            IP address string (current, detected, or placeholder).
+        """
         current_ip = self._get_current_ip(record)
         if current_ip:
             return current_ip
         
         print_info(f"Detecting current {record['record_type']} address...")
         
-        net = NetworkData()
-        net.setup(
-            ipv4_enabled=(record['record_type'] == 'A'),
-            ipv6_enabled=(record['record_type'] == 'AAAA'),
-            timeout=self.config.network_timeout,
-            retry_attempts=self.config.network_retry_attempts,
-            logger=self.logger
+        net = NetworkData(
+            config=self.config,
+            logger=self.logger,
+            ipv4_enabled=(record['record_type'] == RecordType.A),
+            ipv6_enabled=(record['record_type'] == RecordType.AAAA)
         )
         
-        if record['record_type'] == 'A':
+        if record['record_type'] == RecordType.A:
             current_ip = net.get_current_public_ipv4_address()
         else:
             current_ip = net.get_current_public_ipv6_address()
@@ -1618,7 +1951,15 @@ class ConfigMenu:
         return current_ip
     
     def _ensure_provider_record_id(self, record: Dict[str, Any], provider: ProviderDNSClient) -> bool:
-        """Ensure record has provider_record_id, sync if missing."""
+        """Ensure record has provider_record_id, sync or create if missing.
+
+        Args:
+            record: Record dictionary to check and update.
+            provider: ProviderDNSClient instance for API calls.
+
+        Returns:
+            True if record has valid provider_record_id, False otherwise.
+        """
         if record.get('provider_record_id'):
             return True
         
@@ -1630,14 +1971,13 @@ class ConfigMenu:
         try:
             zone_row = self.db.get_zone_by_id(record['zone_id'])
             if not zone_row:
-                raise ValueError(f"Zone {record['zone_id']} not found")
+                raise ZoneNotFoundError(f"Zone {record['zone_id']} not found")
             
             zone = row_to_dict(zone_row)
             
             if not zone.get('provider_zone_id'):
-                raise ValueError(f"Zone '{zone['zone_name']}' has no provider_zone_id")
+                raise APIError(f"Zone '{zone['zone_name']}' has no provider_zone_id")
             
-            # Using provider helper to find record ID
             provider_record_id = provider.find_record_id(
                 zone['provider_zone_id'],
                 record['record_name'],
@@ -1655,7 +1995,6 @@ class ConfigMenu:
             print_warning(f"{record['record_name']} ({record['record_type']}) - Not found in provider, creating...")
             
             if self._create_provider_record(record, zone, provider):
-                # Using provider helper to find newly created record ID
                 provider_record_id = provider.find_record_id(
                     zone['provider_zone_id'],
                     record['record_name'],
@@ -1689,7 +2028,16 @@ class ConfigMenu:
             return False
     
     def _create_provider_record(self, record: Dict[str, Any], zone: Dict[str, Any], provider: ProviderDNSClient) -> bool:
-        """Create a DNS record in the provider."""
+        """Create a DNS record in the provider.
+
+        Args:
+            record: Record dictionary with name, type, and TTL.
+            zone: Zone dictionary with provider_zone_id.
+            provider: ProviderDNSClient instance for API calls.
+
+        Returns:
+            True if record created successfully, False otherwise.
+        """
         try:
             content = get_placeholder_ip(record['record_type'])
             
@@ -1721,19 +2069,31 @@ class ConfigMenu:
             return False
     
     def _update_dns_record(self, record: Dict[str, Any], provider: ProviderDNSClient, old_ip: Optional[str], new_ip: str) -> bool:
-        """Update DNS record via provider API with automatic error recovery."""
+        """Update DNS record via provider API with automatic error recovery.
+
+        Handles RecordNotFoundError by recreating the record at provider.
+
+        Args:
+            record: Record dictionary with zone_id and provider_record_id.
+            provider: ProviderDNSClient instance for API calls.
+            old_ip: Previous IP address or None.
+            new_ip: New IP address to set.
+
+        Returns:
+            True if update successful, False otherwise.
+        """
         try:
             zone_row = self.db.get_zone_by_id(record['zone_id'])
             if not zone_row:
-                raise ValueError(f"Zone {record['zone_id']} not found")
+                raise ZoneNotFoundError(f"Zone {record['zone_id']} not found")
             
             zone = row_to_dict(zone_row)
             
             if not zone.get('provider_zone_id'):
-                raise ValueError(f"Zone '{zone['zone_name']}' has no provider_zone_id")
+                raise APIError(f"Zone '{zone['zone_name']}' has no provider_zone_id")
             
             if not record.get('provider_record_id'):
-                raise ValueError("Record has no provider_record_id")
+                raise APIError("Record has no provider_record_id")
             
             try:
                 success = provider.update_record(
@@ -1744,7 +2104,7 @@ class ConfigMenu:
                 )
                 
                 if not success:
-                    raise ValueError("Provider API update failed")
+                    raise APIError("Provider API update failed")
                     
             except RecordNotFoundError:
                 print_warning(
@@ -1768,11 +2128,11 @@ class ConfigMenu:
                 )
                 
                 if not success:
-                    raise ValueError("Failed to recreate record at provider")
+                    raise APIError("Failed to recreate record at provider")
                 
                 sync_stats = self._sync_zone_with_provider(zone, provider)
-                if not sync_stats or sync_stats.get('synced', 0) == 0:
-                    raise ValueError("Failed to sync after record recreation")
+                if not sync_stats or sync_stats.get(SyncStatus.SYNCED, 0) == 0:
+                    raise APIError("Failed to sync after record recreation")
                 
                 self.db.update_ip_address(
                     record_id=record['id'],
@@ -1784,7 +2144,7 @@ class ConfigMenu:
                     record_id=record['id'],
                     old_ip=old_ip,
                     new_ip=new_ip,
-                    status='success',
+                    status=UpdateStatus.SUCCESS,
                     error_message=None
                 )
                 
@@ -1804,7 +2164,7 @@ class ConfigMenu:
                 record_id=record['id'],
                 old_ip=old_ip,
                 new_ip=new_ip,
-                status='success',
+                status=UpdateStatus.SUCCESS,
                 error_message=None
             )
             
@@ -1824,7 +2184,7 @@ class ConfigMenu:
                 record_id=record['id'],
                 old_ip=old_ip,
                 new_ip=new_ip,
-                status='failed',
+                status=UpdateStatus.FAILED,
                 error_message=str(e)
             )
             
@@ -1832,17 +2192,21 @@ class ConfigMenu:
             return False
     
     def _display_update_summary(self, stats: Dict[str, int]) -> None:
-        """Display update summary statistics."""
+        """Display update summary statistics.
+
+        Args:
+            stats: Dictionary with total, updated, failed, and skipped counts.
+        """
         print_subsection("Update Summary")
-        print(f"{Colors.BOLD}Total records:{Colors.NC}    {stats['total']}")
-        print(f"{Colors.GREEN}{LOG_SYMBOLS['SUCCESS']} Updated:{Colors.NC}        {stats['updated']}")
-        print(f"{Colors.RED}{LOG_SYMBOLS['ERROR']} Failed:{Colors.NC}         {stats['failed']}")
-        print(f"{Colors.YELLOW}{LOG_SYMBOLS['ERROR']} Skipped:{Colors.NC}        {stats['skipped']}")
+        print(f"{Colors.BOLD}Total records:{Colors.NC}    {stats[UpdateStatus.TOTAL]}")
+        print(f"{Colors.GREEN}{LOG_SYMBOLS['SUCCESS']} Updated:{Colors.NC}        {stats[UpdateStatus.UPDATED]}")
+        print(f"{Colors.RED}{LOG_SYMBOLS['ERROR']} Failed:{Colors.NC}         {stats[UpdateStatus.FAILED]}")
+        print(f"{Colors.YELLOW}{LOG_SYMBOLS['ERROR']} Skipped:{Colors.NC}        {stats[UpdateStatus.SKIPPED]}")
         print()
         
-        if stats['updated'] > 0:
-            print_success(f"Force update completed! {stats['updated']} records updated.")
-        elif stats['failed'] > 0:
+        if stats[UpdateStatus.UPDATED] > 0:
+            print_success(f"Force update completed! {stats[UpdateStatus.UPDATED]} records updated.")
+        elif stats[UpdateStatus.FAILED] > 0:
             print_error("Force update completed with errors. Check logs for details.")
         else:
             print_info("No records were updated.")
@@ -1852,7 +2216,11 @@ class ConfigMenu:
     ################################################################################
     
     def import_config(self) -> None:
-        """Launch configuration importer."""
+        """Launch configuration importer from file.
+
+        Prompts for file path and overwrite option, then imports zones
+        and records from YAML or JSON file.
+        """
         print_section("Import Configuration")
         
         file_path = input("Enter file path to import: ").strip()
@@ -1860,6 +2228,9 @@ class ConfigMenu:
             print_error("No file specified.")
             wait_for_enter()
             return
+        
+        file_path = os.path.expanduser(file_path)
+        file_path = os.path.abspath(file_path)
         
         if not os.path.exists(file_path):
             print_error(f"File not found: {file_path}")
@@ -1880,7 +2251,11 @@ class ConfigMenu:
         wait_for_enter()
     
     def export_config(self) -> None:
-        """Launch configuration exporter."""
+        """Launch configuration exporter with smart defaults.
+
+        Generates timestamped filename, supports tilde expansion,
+        and auto-detects format from file extension.
+        """
         print_section("Export Configuration")
         print()
         
@@ -1904,13 +2279,13 @@ class ConfigMenu:
             output_file = os.path.abspath(output_file)
         
         file_ext = os.path.splitext(output_file)[1].lower()
-        if file_ext in ['.yaml', '.yml']:
-            format_type = 'yaml'
-        elif file_ext == '.json':
-            format_type = 'json'
+        if file_ext in [ExportFormat.EXT_YAML, ExportFormat.EXT_YML]:
+            format_type = ExportFormat.YAML
+        elif file_ext == ExportFormat.EXT_JSON:
+            format_type = ExportFormat.JSON
         else:
             format_choice = input("Format (yaml/json) [yaml]: ").strip().lower()
-            format_type = format_choice if format_choice in ['yaml', 'json'] else 'yaml'
+            format_type = format_choice if ExportFormat.is_valid(format_choice) else ExportFormat.YAML
         
         print(f"\nExporting configuration...")
         exporter = ConfigExporter(self.config, self.logger)
@@ -1931,9 +2306,24 @@ class ConfigMenu:
 ################################################################################
 
 class ConfigImporter:
-    """Import DynDNS configuration from YAML/JSON files."""
+    """Import DynDNS configuration from YAML or JSON files.
+
+    Attributes:
+        config: ConfigManager instance with application settings.
+        logger: Logger instance for debug and error messages.
+        db: DatabaseManager instance for zone and record operations.
+    """
     
     def __init__(self, config: Any, logger: Any) -> None:
+        """Initialize configuration importer.
+
+        Args:
+            config: ConfigManager instance with database access.
+            logger: Logger instance for logging output.
+
+        Raises:
+            DatabaseError: If database is not initialized.
+        """
         self.config = config
         self.logger = logger
         self.db = config.db
@@ -1942,7 +2332,15 @@ class ConfigImporter:
             raise DatabaseError("Database not initialized. Run 'ionos-dyndns config' first.")
     
     def import_from_file(self, file_path: str, overwrite: bool = False) -> int:
-        """Import configuration from YAML/JSON file."""
+        """Import configuration from a YAML or JSON file.
+
+        Args:
+            file_path: Path to the import file.
+            overwrite: If True, update existing zones instead of skipping.
+
+        Returns:
+            Exit code, 0 for success, 1 for failure.
+        """
         try:
             self.logger.info(f"Importing configuration from {file_path}")
             
@@ -1974,17 +2372,29 @@ class ConfigImporter:
             return 1
     
     def _parse_file(self, file_path: str) -> Optional[Dict[str, Any]]:
-        """Parse YAML or JSON file."""
+        """Parse YAML or JSON file based on file extension.
+
+        Args:
+            file_path: Path to the file to parse.
+
+        Returns:
+            Parsed data as dictionary, or None if parsing failed.
+        """
         with open(file_path, 'r') as f:
-            if file_path.endswith('.json'):
+            if file_path.endswith(ExportFormat.EXT_JSON):
                 return json.load(f)
             else:
-                if yaml is None:
-                    raise ImportError("PyYAML not installed. Install with: pip install pyyaml")
                 return yaml.safe_load(f)
     
     def _validate_import_data(self, data: Dict[str, Any]) -> bool:
-        """Validate import data structure."""
+        """Validate import data structure for required fields.
+
+        Args:
+            data: Parsed import data to validate.
+
+        Returns:
+            True if data structure is valid, False otherwise.
+        """
         if not isinstance(data, dict):
             return False
         
@@ -2005,7 +2415,15 @@ class ConfigImporter:
         return True
     
     def _process_zones(self, data: Dict[str, Any], overwrite: bool) -> int:
-        """Process and import zones with records."""
+        """Process and import zones with their associated records.
+
+        Args:
+            data: Validated import data containing zones array.
+            overwrite: If True, update existing zones.
+
+        Returns:
+            Exit code, 0 for success, 1 for failure.
+        """
         zones_data = data.get('zones', [])
         
         if not zones_data:
@@ -2067,7 +2485,16 @@ class ConfigImporter:
         return 0
     
     def _process_records(self, zone_id: int, records_data: List[Dict[str, Any]], overwrite: bool) -> int:
-        """Process and import records for a zone."""
+        """Process and import records for a zone.
+
+        Args:
+            zone_id: Database zone ID to add records to.
+            records_data: List of record dictionaries from import file.
+            overwrite: If True, update existing records; if False, skip them.
+
+        Returns:
+            Number of records imported or updated.
+        """
         imported_count = 0
         
         for record_data in records_data:
@@ -2111,9 +2538,24 @@ class ConfigImporter:
 ################################################################################
 
 class ConfigExporter:
-    """Export DynDNS configuration to YAML/JSON files."""
+    """Export DynDNS configuration to YAML or JSON files.
+
+    Attributes:
+        config: ConfigManager instance with application settings.
+        logger: Logger instance for debug and error messages.
+        db: DatabaseManager instance for zone and record operations.
+    """
     
     def __init__(self, config: Any, logger: Any) -> None:
+        """Initialize configuration exporter.
+
+        Args:
+            config: ConfigManager instance with database access.
+            logger: Logger instance for logging output.
+
+        Raises:
+            DatabaseError: If database is not initialized.
+        """
         self.config = config
         self.logger = logger
         self.db = config.db
@@ -2121,18 +2563,24 @@ class ConfigExporter:
         if self.db is None:
             raise DatabaseError("Database not initialized. Run 'ionos-dyndns config' first.")
     
-    def export_to_file(self, output_file: Optional[str] = None, format: str = 'yaml') -> int:
-        """Export configuration to file or stdout."""
+    def export_to_file(self, output_file: Optional[str] = None, format: str = ExportFormat.YAML) -> int:
+        """Export configuration to file or stdout.
+
+        Args:
+            output_file: Path to output file, or None for stdout.
+            format: Export format, either 'yaml' or 'json'.
+
+        Returns:
+            Exit code, 0 for success, 1 for failure.
+        """
         try:
             self.logger.info("Exporting configuration")
             
             config_data = self._build_export_data()
             
-            if format == 'json':
+            if format == ExportFormat.JSON:
                 output = json.dumps(config_data, indent=2)
             else:
-                if yaml is None:
-                    raise ImportError("PyYAML not installed. Install with: pip install pyyaml")
                 output = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
             
             if output_file:
@@ -2154,10 +2602,14 @@ class ConfigExporter:
             return 1
     
     def _build_export_data(self) -> Dict[str, Any]:
-        """Build export structure."""
+        """Build the export data structure with all zones and records.
+
+        Returns:
+            Dictionary containing version, timestamp, and zones array.
+        """
         data = {
             'version': '1.0',
-            'exported_at': datetime.utcnow().isoformat() + 'Z',
+            'exported_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             'zones': []
         }
         

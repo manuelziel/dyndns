@@ -1,31 +1,42 @@
 #!/bin/bash
-# lib/runtime/application.sh
+# lib/runtime/application.sh - Application runtime functions
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
 # This program is free software: you can redistribute it and/or modify
-
 ################################################################################
 # 1. CORE APPLICATION LOGIC
 ################################################################################
 
 do_main_work() {
-    # For IONOS-DYNDNS: Start Python application
     start_python_application "$@"
-    
-    #print_success "Main work completed"
     
     return 0
 }
 
 ################################################################################
-# 2. BASIC APPLICATION CONTROL  
+# 2. BASIC APPLICATION CONTROL
 ################################################################################
+
+send_signal() {
+    local pid="$1"
+    local signal="$2"
+    
+    if ! kill -0 "${pid}" 2>/dev/null; then
+        if sudo kill -0 "${pid}" 2>/dev/null; then
+            sudo kill -"${signal}" "${pid}" 2>/dev/null
+            return 0
+        fi
+        return 1
+    fi
+    
+    # Process accessible without sudo
+    kill -"${signal}" "${pid}" 2>/dev/null
+    return 0
+}
 
 start_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
@@ -37,50 +48,77 @@ start_application() {
         return 0
     fi
     
-    do_main_work
-
-    # print_success "${software_name} running successfully"
+    do_main_work "$@"
 }
 
 stop_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local pid_file="${PID_FILE}"
-    local pid
+    local python_script="${PYTHON_SCRIPT}"
     local count=0
-
+    local max_wait=10
+    local all_pids=$(pgrep -f "^python3 .*${python_script}" || true)
+    local remaining_pids
+    local pid_list=""
+    
     print_info "Stopping ${software_name}..."
-
-    if [[ -f "${pid_file}" ]]; then
-        pid=$(cat "${pid_file}" 2>/dev/null)
-        if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
-            print_info "Sending TERM signal to process ${pid}"
-            kill -TERM "${pid}"
-            
-            # Wait for graceful shutdown
-            while [[ ${count} -lt 10 ]] && kill -0 "${pid}" 2>/dev/null; do
-                sleep 1
-                ((count++))
-            done
-            
-            # Force kill if still running
-            if kill -0 "${pid}" 2>/dev/null; then
-                print_warning "Process still running, forcing shutdown"
-                kill -KILL "${pid}" 2>/dev/null
-            fi
-        fi
-        rm -f "${pid_file}"
+    
+    # Format PIDs as comma-separated list for better readability
+    if [[ -n "${all_pids}" ]]; then
+        local pid_count=$(echo "${all_pids}" | wc -l)
+        pid_list=$(echo "${all_pids}" | tr '\n' ',' | sed 's/,/, /g' | sed 's/, $//')
+        print_info "Found ${pid_count} process(es): ${pid_list}"
+    else
+        remove_pid_file
+        print_info "${software_name} is not running"
+        return 0
     fi
 
-    print_success "${software_name} stopped"
+    # Send TERM signal to all processes
+    for pid in ${all_pids}; do
+        send_signal "${pid}" "TERM"
+    done
+
+    # Wait for shutdown
+    while [[ ${count} -lt ${max_wait} ]]; do
+        remaining_pids=$(pgrep -f "^python3 .*${python_script}" || true)
+        if [[ -z "${remaining_pids}" ]]; then
+            break
+        fi
+        sleep 1
+        ((count++))
+    done
+
+    # Force kill any remaining processes
+    remaining_pids=$(pgrep -f "^python3 .*${python_script}" || true)
+    if [[ -n "${remaining_pids}" ]]; then
+        print_warning "Processes did not terminate, forcing shutdown..."
+        for pid in ${remaining_pids}; do
+            send_signal "${pid}" "KILL"
+        done
+        sleep 1
+    fi
+
+    remove_pid_file
+
+    if [[ -z "${remaining_pids}" ]]; then
+        print_success "${software_name} stopped"
+    else
+        print_error "Failed to stop some processes"
+        return 1
+    fi
 }
 
 restart_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+    local restart_delay=2
 
     print_info "Restarting ${software_name}..."
     stop_application
-    sleep 2
-    start_application
+    sleep "${restart_delay}"
+
+    # Pass all arguments to start
+    start_application "$@"
 }
 
 ################################################################################
@@ -111,7 +149,6 @@ run_application() {
 # 4. CONFIGURATION MANAGEMENT
 ################################################################################
 
-# Can be called while daemon is running or when stopped
 configure_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local config_file="${CONFIG_FILE:-"[CONFIG_FILE]"}"
@@ -128,15 +165,12 @@ configure_application() {
     
     echo ""
     print_info "Configuration options:"
-    echo "  • Configuration file: ${config_file}"
-    echo "  • PID file: ${pid_file}"
+    echo "  • Config file: ${config_file}"
     echo ""
     
     print_info "Starting interactive configuration menu..."
     
     if [[ ${ENABLE_PYTHON:-0} -eq 1 ]]; then
-        # Pass "config" command to Python CLI
-        # CLI runs independently - can configure even while daemon is running
         start_python_cli "config"
     else
         print_warning "Python support not enabled"

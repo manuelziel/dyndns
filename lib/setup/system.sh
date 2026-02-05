@@ -1,10 +1,8 @@
 #!/bin/bash
 # lib/setup/system.sh - System utilities and checks
 #
-# IONOS-DYNDNS Setup Script
-# Setup script for Dynamic DNS Client
+# IONOS-DYNDNS
 #
-# Created: 2025-04-27
 # Author: Manuel Ziel
 # License: MIT
 #
@@ -17,13 +15,11 @@
 check_internet() {
     print_info "Checking internet connection..."
     
-    # Try ping first (faster)
     if ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1; then
         print_success "Internet connection available"
         return 0
     fi
     
-    # Fallback to curl if available
     if command -v curl &>/dev/null; then
         if curl -s --connect-timeout 5 --head https://www.google.com >/dev/null 2>&1; then
             print_success "Internet connection available"
@@ -31,7 +27,6 @@ check_internet() {
         fi
     fi
     
-    # Fallback to wget if available
     if command -v wget &>/dev/null; then
         if wget -q --spider --timeout=5 https://www.google.com >/dev/null 2>&1; then
             print_success "Internet connection available"
@@ -42,7 +37,7 @@ check_internet() {
     print_error "No internet connection detected"
     echo ""
     echo "Internet connection is required to download files and install packages."
-    echo "Please check your network connection and try again."
+    echo "Check your network connection and try again."
     echo ""
     return 1
 }
@@ -59,7 +54,6 @@ check_and_install_dependencies() {
     local missing_packages=()
     local missing_pkg_keys=()
     
-    # Check all dependencies (package-based check)
     for pkg_key in "${dependencies[@]}"; do
         pkg_name=$(get_package_name_for_key "${pkg_key}")
         
@@ -82,7 +76,7 @@ check_and_install_dependencies() {
             echo ""
             read -rp "Install missing dependencies automatically? (y/n): " -n 1
             echo ""
-            if [[ ! ${REPLY} =~ ^[Yy]$ ]]; then
+            if [[ ! "${REPLY}" =~ ^[Yy]$ ]]; then
                 print_info "Dependency installation cancelled"
                 return 1
             fi
@@ -112,7 +106,7 @@ install_system_dependencies() {
 
     if [[ "${package_manager}" == "unknown" ]]; then
         print_error "No supported package manager found"
-        print_info "Please install these packages manually: ${packages[*]}"
+        print_info "Install these packages manually: ${packages[*]}"
         return 1
     fi
 
