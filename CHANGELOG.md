@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.3alpha03] - 2026-02-21
+### Added 
+- Added explicit systemd timeouts (start: 60s, stop: 15s)
+- Added offline-first Python dependency check before network install
+
+### Changed
+- Service restart policy from `on-failure` to `always` with exit code 0 prevention
+- Reduced service restart delay from 10s to 5s
+- Increased Python daemon startup check delay from 1s to 3s
+- Export `DAEMON_MODE` to Python environment for logger configuration
+
 ## [1.0.3alpha02] - 2026-02-05
 ### Added
 - `purge` command and `--purge` flag for complete removal including data directory

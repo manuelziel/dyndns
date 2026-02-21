@@ -13,8 +13,8 @@
 ################################################################################
 
 readonly AUTHOR="Manuel Ziel"
-readonly VERSION="1.0.3alpha02"
-readonly LAST_MODIFIED="2026-02-05"
+readonly VERSION="1.0.3alpha03"
+readonly LAST_MODIFIED="2026-02-21"
 readonly SOFTWARE_NAME="IONOS-DYNDNS"
 readonly SOFTWARE_DESCRIPTION="Dynamic DNS Client for IONOS"
 
@@ -86,8 +86,8 @@ readonly SERVICE_EXEC_STOP="${BIN_SYMLINK} stop"                # Command to sto
 readonly SERVICE_TYPE="forking"                                 # forking (bash forks python, exits, python keeps running)
 readonly SERVICE_PIDFILE="${PID_FILE}"                          # PID file for forking service type
 readonly SERVICE_USER="root"                                    # User to run service as (empty = root)
-readonly SERVICE_RESTART="on-failure"                           # no, on-success, on-failure, on-abnormal, on-abort, always
-readonly SERVICE_RESTART_SEC="10"                               # Seconds to wait before restart
+readonly SERVICE_RESTART="always"                               # no, on-success, on-failure, on-abnormal, on-abort, always
+readonly SERVICE_RESTART_SEC="5"                                # Seconds to wait before restart
 readonly SERVICE_AFTER="network-online.target"                  # Dependencies (space-separated)
 readonly SERVICE_WANTS="network-online.target"                  # Optional dependencies (space-separated) 
 readonly SERVICE_WANTED_BY="multi-user.target"                  # Install target

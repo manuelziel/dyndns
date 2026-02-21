@@ -27,7 +27,7 @@ License: MIT
 # PACKAGE METADATA
 ################################################################################
 
-__version__ = "1.0.3alpha02"
+__version__ = "1.0.3alpha03"
 __author__ = "Manuel Ziel"
 __email__ = "manuelziel@gmail.com"
 __description__ = "Dynamic DNS Client"

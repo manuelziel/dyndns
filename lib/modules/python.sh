@@ -72,6 +72,13 @@ install_python_dependencies() {
     print_info "Installing Python dependencies..."
 
     if [[ -f "${requirements_file}" ]]; then
+        # Fast offline check - verify all packages are already installed
+        if pip install --no-index --no-deps -r "${requirements_file}" -q 2>/dev/null; then
+            print_success "All required packages installed"
+            return 0
+        fi
+
+        # Packages missing - need network install
         if pip install --upgrade -r "${requirements_file}" -q; then
             print_success "All required packages installed"
             return 0
@@ -124,6 +131,10 @@ export_python_environment() {
         export VERBOSE=1
     fi
     
+    # Export daemon mode for Python logger (suppress console handler in daemon mode)
+    local daemon_mode="${DAEMON_MODE:-0}"
+    export DAEMON_MODE="${daemon_mode}"
+
     print_success "Python environment variables exported"
 }
 
@@ -155,7 +166,7 @@ start_python_application() {
     print_info "Executing: ${python_script} $*"
 
     local daemon_mode="${DAEMON_MODE:-0}"
-    local init_delay=1
+    local init_delay=3
 
     # Check if running in daemon mode (background) or single-run mode (foreground)
     if [[ "${daemon_mode}" -eq 1 ]]; then

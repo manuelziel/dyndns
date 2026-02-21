@@ -350,12 +350,13 @@ show_requirements() {
     local dependencies="$(printf '%s, ' "${!DEPENDENCIES[@]}" | sed 's/, $//')"
     local service_name=${SERVICE_NAME:-"[SERVICE_NAME]"}
     local service_path=${SERVICE_PATH:-"[SERVICE_PATH]"}
-    local install_path=${INSTALL_PATH}
+    local install_path=${INSTALL_PATH:-"[INSTALL_PATH]"}
     local os_info="Linux"
     
     if [[ -f /etc/os-release ]]; then
-        source /etc/os-release
-        os_info="${PRETTY_NAME:-${NAME:-Linux}}"
+        os_info=$(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
+        [[ -z "${os_info}" ]] && os_info=$(grep '^NAME=' /etc/os-release 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
+        os_info="${os_info:-Linux}"
     fi
 
     print_section "System Requirements"

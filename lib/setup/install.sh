@@ -454,6 +454,7 @@ install_single_item() {
 }
 
 create_service() {
+    local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
     local service_content
     local service_after="${SERVICE_AFTER:-network.target}"
@@ -498,13 +499,18 @@ ExecStop=${service_exec_stop}"
 
     if [[ "${service_restart}" != "no" ]]; then
         service_content+="\nRestart=${service_restart}"
+        service_content+="\nRestartPreventExitStatus=0"
         if [[ -n "${service_restart_sec}" ]] && [[ "${service_restart_sec}" != "0" ]]; then
             service_content+="\nRestartSec=${service_restart_sec}"
         fi
     fi
+
+    service_content+="\nTimeoutStartSec=60"
+    service_content+="\nTimeoutStopSec=15"
     
     service_content+="\nStandardOutput=journal"
     service_content+="\nStandardError=journal"
+    service_content+="\nStandardInput=null"
     service_content+="\nSyslogIdentifier=${SOFTWARE_DIR_NAME}"
     
     service_content+="\n\n# Security hardening"
