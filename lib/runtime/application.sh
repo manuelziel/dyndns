@@ -7,8 +7,9 @@
 # License: MIT
 #
 # This program is free software: you can redistribute it and/or modify
+
 ################################################################################
-# 1. CORE APPLICATION LOGIC
+# CORE APPLICATION LOGIC
 ################################################################################
 
 do_main_work() {
@@ -18,7 +19,7 @@ do_main_work() {
 }
 
 ################################################################################
-# 2. BASIC APPLICATION CONTROL
+# BASIC APPLICATION CONTROL
 ################################################################################
 
 send_signal() {
@@ -122,7 +123,7 @@ restart_application() {
 }
 
 ################################################################################
-# 3. ADVANCED APPLICATION CONTROL
+# ADVANCED APPLICATION CONTROL
 ################################################################################
 
 run_application() {
@@ -146,7 +147,7 @@ run_application() {
 }
 
 ################################################################################
-# 4. CONFIGURATION MANAGEMENT
+# CONFIGURATION MANAGEMENT
 ################################################################################
 
 configure_application() {

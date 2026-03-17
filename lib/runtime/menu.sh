@@ -9,7 +9,7 @@
 # This program is free software: you can redistribute it and/or modify
 
 ################################################################################
-# 1. INTERACTIVE MENU
+# INTERACTIVE MENU
 ################################################################################
 
 show_interactive_menu() {
@@ -149,7 +149,7 @@ show_interactive_menu() {
 }
 
 ################################################################################
-# 2. HELP AND STATUS
+# HELP AND STATUS
 ################################################################################
 
 show_help() {
@@ -170,15 +170,15 @@ show_help() {
     echo "  setup-env               # Setup Python virtual environment"
     echo "  config                  # Configure ${software_name}"
     echo "  status                  # Show ${software_name} status"
-    echo "  help, -h                # Show this help"
+    echo "  help, --help, -h        # Show this help"
     echo "  version                 # Show version information"
     echo ""
     echo "Options:"
     echo "  --interactive, -i       # Force interactive mode"
     echo "  --daemon, -d            # Run in daemon mode (for start action)"
     echo "  --quiet, -q             # Quiet mode (suppress output)"
-    echo "  --version, -v           # Show version information"
     echo "  --help, -h              # Show this help"
+    echo "  --version, -v           # Show version information"
     echo ""
     echo "Examples:"
     echo "  ${cmd_name} start                # Start ${software_name}"

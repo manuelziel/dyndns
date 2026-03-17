@@ -9,7 +9,7 @@
 # This program is free software: you can redistribute it and/or modify
 
 ################################################################################
-# 1. LOGGING & OUTPUT - Colored and formatted output functions
+# LOGGING & OUTPUT - Colored and formatted output functions
 ################################################################################
 
 print_status() {
@@ -77,7 +77,7 @@ print_banner() {
 }
 
 ################################################################################
-# 2. SHOW LOGS
+# SHOW LOGS
 ################################################################################
 
 show_recent_logs() {

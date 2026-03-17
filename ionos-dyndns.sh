@@ -188,7 +188,7 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-            help|-h)
+            help|--help|-h)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="help"
                     shift

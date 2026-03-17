@@ -9,7 +9,7 @@
 # This program is free software: you can redistribute it and/or modify
 
 ################################################################################
-# 1. CORE INSTALLATION FUNCTIONS
+# CORE INSTALLATION FUNCTIONS
 ################################################################################
 
 do_install() {
@@ -284,7 +284,7 @@ do_configure() {
 }
 
 ################################################################################
-# 2. HELPER FUNCTIONS - Setup and Utilities  
+# HELPER FUNCTIONS - Setup and Utilities  
 ################################################################################
 
 create_data_directory() {

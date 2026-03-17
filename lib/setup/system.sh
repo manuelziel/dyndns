@@ -9,7 +9,7 @@
 # This program is free software: you can redistribute it and/or modify
 
 ################################################################################
-# 1. SYSTEM DETECTION & CHECKS
+# SYSTEM DETECTION & CHECKS
 ################################################################################
 
 check_internet() {
@@ -43,7 +43,7 @@ check_internet() {
 }
 
 ################################################################################
-# 3. DEPENDENCY MANAGEMENT
+# DEPENDENCY MANAGEMENT
 ################################################################################
 
 check_and_install_dependencies() {

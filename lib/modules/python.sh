@@ -9,7 +9,7 @@
 # This program is free software: you can redistribute it and/or modify
 
 ################################################################################
-# 1. VIRTUAL ENVIRONMENT MANAGEMENT
+# VIRTUAL ENVIRONMENT MANAGEMENT
 ################################################################################
 
 setup_virtual_environment() {
@@ -63,7 +63,7 @@ activate_virtual_environment() {
 }
 
 ################################################################################
-# 2. DEPENDENCY MANAGEMENT
+# DEPENDENCY MANAGEMENT
 ################################################################################
 
 install_python_dependencies() {
@@ -93,7 +93,7 @@ install_python_dependencies() {
 }
 
 ################################################################################
-# 3. ENVIRONMENT EXPORT
+# ENVIRONMENT EXPORT
 ################################################################################
 
 export_python_environment() {
@@ -139,7 +139,7 @@ export_python_environment() {
 }
 
 ################################################################################
-# 4. APPLICATION MANAGEMENT
+# APPLICATION MANAGEMENT
 ################################################################################
 
 start_python_application() {
@@ -252,7 +252,7 @@ start_python_cli() {
 }
 
 ################################################################################
-# 5. ORCHESTRATION
+# ORCHESTRATION
 ################################################################################
 
 setup_python_environment() {

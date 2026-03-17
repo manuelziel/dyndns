@@ -9,7 +9,7 @@
 # This program is free software: you can redistribute it and/or modify
 
 ################################################################################
-# 1. CORE UTILITIES & STATUS
+# CORE UTILITIES & STATUS
 ################################################################################
 
 check_root() {
@@ -22,7 +22,7 @@ check_root() {
 }
 
 ################################################################################
-# 2. SYSTEM & VALIDATION - Process Management and System Checks
+# SYSTEM & VALIDATION - Process Management and System Checks
 ################################################################################
 
 detect_package_manager() {
@@ -121,7 +121,7 @@ check_dependencies() {
 }
 
 ################################################################################
-# 2. INSTALLATION STATUS
+# INSTALLATION STATUS
 ################################################################################ 
 
 is_installed() {
@@ -150,7 +150,7 @@ get_installed_version() {
 }
 
 ################################################################################
-# 3. Service Management
+# SERVICE MANAGEMENT
 ################################################################################
 
 service_exists() {
@@ -267,7 +267,7 @@ get_service_status() {
 }
 
 ################################################################################
-# 4. Menu & Version
+# MENU & SERVICE STATUS
 ################################################################################
 
 show_software_status() {

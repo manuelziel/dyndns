@@ -13,8 +13,8 @@
 ################################################################################
 
 readonly AUTHOR="Manuel Ziel"
-readonly VERSION="1.0.3alpha03"
-readonly LAST_MODIFIED="2026-02-21"
+readonly VERSION="1.0.3alpha04"
+readonly LAST_MODIFIED="2026-03-17"
 readonly SOFTWARE_NAME="IONOS-DYNDNS"
 readonly SOFTWARE_DESCRIPTION="Dynamic DNS Client for IONOS"
 

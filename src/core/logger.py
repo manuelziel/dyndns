@@ -182,19 +182,31 @@ class LoggerManager:
         Returns:
             Configured logging.Logger instance with handlers.
         """
-        daemon_mode = kwargs.get('daemon_mode', False)
+        # Auto-detect systemd: INVOCATION_ID and JOURNAL_STREAM are set by
+        # systemd when launching a service. If either is present, stdout is
+        # already forwarded to the journal — adding a console handler would
+        # cause every log line to appear twice in journalctl.
+        running_under_systemd = bool(
+            os.environ.get('INVOCATION_ID') or os.environ.get('JOURNAL_STREAM')
+        )
+        daemon_mode = kwargs.get('daemon_mode', running_under_systemd)
+
+        # Explicit log level from kwargs (from config.toml)
         log_level = kwargs.get('level', None)
-        
+        if log_level is not None and isinstance(log_level, str):
+            log_level = getattr(logging, log_level.upper(), logging.INFO)
+
+        # Environment variables (bash DEBUG/VERBOSE)
         if log_level is None:
-            debug_mode = os.getenv('DEBUG', '0') == '1'
-            verbose_mode = os.getenv('VERBOSE', '0') == '1'
+            debug_mode = os.environ.get('DEBUG', '0') == '1'
+            verbose_mode = os.environ.get('VERBOSE', '0') == '1'
             
             if debug_mode:
                 log_level = logging.DEBUG
             elif verbose_mode:
                 log_level = logging.INFO
             else:
-                log_level = logging.INFO
+                log_level = logging.WARNING
         
         logger = logging.getLogger(name)
         logger.setLevel(log_level)
@@ -243,6 +255,7 @@ class LoggerManager:
             journal_handler = journal.JournalHandler(SYSLOG_IDENTIFIER=__syslog_identifier__)
             journal_handler.setLevel(level)
 
+            # Use PlainFormatter for journal (no ANSI codes, systemd adds metadata)
             journal_formatter = PlainFormatter()
             journal_handler.setFormatter(journal_formatter)
             logger.addHandler(journal_handler)

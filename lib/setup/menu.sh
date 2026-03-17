@@ -9,7 +9,7 @@
 # This program is free software: you can redistribute it and/or modify
 
 ################################################################################
-# 1. INTERACTIVE MENU
+# INTERACTIVE MENU
 ################################################################################
 
 show_interactive_menu() {
@@ -204,7 +204,7 @@ show_interactive_menu() {
 }
 
 ################################################################################
-# 2. HELP AND STATUS
+# HELP AND STATUS
 ################################################################################
 
 show_help() {
@@ -222,7 +222,7 @@ show_help() {
     echo "  uninstall                   Uninstall ${software_name}"
     echo "  purge                       Completely remove including all data"
     echo "  status                      Show installation status"
-    echo "  help, -h                    Show this help message"
+    echo "  help, --help, -h            Show this help message"
     echo "  version                     Show version information"
     echo ""
     echo "Options (can be combined):"

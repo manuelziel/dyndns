@@ -8,6 +8,10 @@
 #
 # This program is free software: you can redistribute it and/or modify
 
+################################################################################
+# COLOR DEFINITIONS
+################################################################################
+
 # Colors for output
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -19,6 +23,10 @@ readonly WHITE='\033[1;37m'
 readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
 readonly NC='\033[0m' # No Color
+
+################################################################################
+# UTILITY FUNCTIONS
+################################################################################
 
 strip_colors() {
     echo "$1" | sed 's/\x1b\[[0-9;]*m//g'
