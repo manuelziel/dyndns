@@ -26,14 +26,20 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
+# Standard Imports
+import logging
 import os
 import sys
-import logging
 import threading
-from typing import Dict, Any
-from systemd import journal
+from typing import Optional, Dict, Any
 
-# Local imports
+# Third-Party Imports
+try:
+    from systemd import journal
+except ImportError:
+    journal = None
+
+# Local Imports
 from ..utils.colors import LOG_COLORS, LOG_SYMBOLS
 from .exceptions import ConfigError
 
@@ -44,6 +50,7 @@ try:
         from src import __syslog_identifier__
 except ImportError:
     sys.stderr.write("Warning: SYSLOG_IDENTIFIER not found in environment or package metadata.\n")
+
 
 ################################################################################
 # FORMATTER CLASSES - ANSI Color Formatting
@@ -73,10 +80,12 @@ class PlainFormatter(logging.Formatter):
 
 
 class ColoredFormatter(logging.Formatter):
-    """Formatter with ANSI colors and symbols for console output.
+    """Formatter with ANSI colors for console output.
 
     Compatible with bash colors.sh for consistent terminal appearance.
-    Adds level-specific colors and symbols (✓, ✗, ℹ) to log messages.
+    Applies level-specific colors to log messages. Level symbols from
+    LOG_SYMBOLS are prepended only when non-empty (currently empty by
+    design: color already conveys the level).
 
     Attributes:
         COLORS: Mapping of log levels to ANSI color codes.

@@ -1,9 +1,10 @@
 #!/bin/bash
 # lib/setup/install.sh - Installation and management functions
 #
-# IONOS-DYNDNS
+# [SOFTWARE_NAME] Script
 #
-# Author: Manuel Ziel
+# Created: [CREATION_DATE]
+# Author: [AUTHOR]
 # License: MIT
 #
 # This program is free software: you can redistribute it and/or modify
@@ -30,9 +31,14 @@ do_install() {
         return 1
     fi
     
-    backup_installation || true
+    backup_installation || true  # Don't fail if backup fails
     
     if ! install_files; then
+        return 1
+    fi
+
+    if ! create_service_user; then
+        print_error "Failed to create service user/group"
         return 1
     fi
 
@@ -41,31 +47,19 @@ do_install() {
     fi
 
     if [[ "${create_service_flag}" == "true" ]]; then
-        if create_service; then
-            echo ""
-            read -rp "Do you want to start and enable the service now? (y/n): " -n 1
-            echo ""
-            if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
-                if service_enabled && service_restart; then
-                    print_success "Service started and enabled"
-                else 
-                    print_warning "Failed to start/enable service - you may need to do this manually"
-                    print_info "Try: sudo systemctl start ${service_name}"
-                    print_info "Enable on boot with: sudo systemctl enable ${service_name}"
-                    print_info "Check status with: sudo systemctl status ${service_name}"
-                fi
-            else 
-                print_info "You can start the service later with: sudo systemctl start ${service_name}"
-                print_info "Enable on boot with: sudo systemctl enable ${service_name}"
-                print_info "Check status with: sudo systemctl status ${service_name}"
-            fi
-        else 
+        if ! create_service; then
             print_warning "Service creation failed, continuing installation"
         fi
     fi
 
     print_success "${software_name} installed successfully!"
-    
+
+    echo ""
+    print_info "Next steps:"
+    echo "  1. Configure: ${software_name} config"
+    echo "  2. Enable & start: sudo systemctl enable --now ${service_name}"
+    echo "  3. View logs: sudo journalctl -u ${service_name} -f"
+
     return 0
 }
 
@@ -114,6 +108,7 @@ do_update() {
         fi
     fi
 
+    # configure optional dependencies in config.sh
     if [[ "${enable_optional_dependency}" -eq 1 ]]; then
         if ! setup_optional_function; then
             print_error "Failed to setup or install optional dependencies, continuing..."
@@ -151,6 +146,8 @@ do_update() {
 
 do_reinstall() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+
+    #print_section "Reinstalling ${software_name}"
 
     if FORCE_MODE=1 do_uninstall && FORCE_MODE=1 do_install; then
         print_success "Reinstallation completed successfully"
@@ -212,7 +209,7 @@ do_uninstall() {
         rm -rf "${bin_dir}"
         print_success "Binary directory removed: ${bin_dir}"
     fi
-
+ 
     if [[ -d "${share_dir}" ]]; then
         rm -rf "${share_dir}"
         print_success "Share directory removed: ${share_dir}"
@@ -221,7 +218,7 @@ do_uninstall() {
     print_success "${software_name} uninstalled completely!"
     
     if [[ "${PURGE_MODE:-0}" -eq 0 ]]; then
-        print_info "Note: Data directory ${VAR_LIB_DIR:-/var/lib/ionos-dyndns} was preserved"
+        print_info "Note: Data directory ${VAR_LIB_DIR:-/var/lib/[SOFTWARE_DIR_NAME]} was preserved"
         print_info "Use 'purge' or 'uninstall --purge' to remove all data"
     fi
     return 0
@@ -231,6 +228,7 @@ do_purge() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local force_mode="${FORCE_MODE:-0}"
     local var_lib_dir="${VAR_LIB_DIR:-"/var/lib/[VAR_LIB_DIR]"}"
+    local etc_dir="${ETC_DIR:-"/etc/[SOFTWARE_DIR_NAME]"}"
 
     print_section "Purging ${software_name}"
     print_warning "This will remove ALL data"
@@ -256,30 +254,15 @@ do_purge() {
         print_info "Data directory not found: ${var_lib_dir}"
     fi
 
-    print_success "${software_name} purged completely! All data removed."
-    return 0
-}
-
-do_configure() {
-    local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-    local config_file="${CONFIG_FILE:-"[CONFIG_FILE]"}"
-
-    print_section "Configuring ${software_name}"
-
-    if ! is_installed; then
-        print_error "${software_name} is not installed"
-        print_info "Use --install to install first"
-        return 1
+    if [[ -d "${etc_dir}" ]]; then
+        print_info "Removing config directory: ${etc_dir}"
+        rm -rf "${etc_dir}"
+        print_success "Config directory removed: ${etc_dir}"
     fi
-    
-    print_info "Configuration options:"
-    echo "  • Service management: systemctl <start|stop|enable|disable> ${service_name}"
-    echo "  • Configuration files: ${config_file}"
 
-    # Add configuration logic here
-    print_warning "Interactive configuration not implemented yet"
-    print_info "Configure manually for now"
-    
+    remove_service_user
+
+    print_success "${software_name} purged completely! All data removed."
     return 0
 }
 
@@ -287,35 +270,169 @@ do_configure() {
 # HELPER FUNCTIONS - Setup and Utilities  
 ################################################################################
 
-create_data_directory() {
-    local var_lib_dir="${VAR_LIB_DIR:-"[VAR_LIB_DIR]"}"
-    
-    print_info "Creating data directory: ${var_lib_dir}"
-    
-    if [[ -d "${var_lib_dir}" ]]; then
-        print_info "Data directory already exists"
+# Create dedicated system user and group for the service.
+#
+# Controlled by SERVICE_CREATE_USER. Idempotent: safe to call on reinstall.
+# Creates:
+#   - Group SERVICE_GROUP (or SERVICE_USER if unset) as system group
+#   - User SERVICE_USER as system user (no login, home = SERVICE_USER_HOME)
+#   - Adds SERVICE_SUPPLEMENTARY_GROUPS (space-separated) to the user
+#
+# Returns 0 on success or when not configured; 1 on failure.
+create_service_user() {
+    local create_user="${SERVICE_CREATE_USER:-false}"
+    local service_user="${SERVICE_USER:-root}"
+    local service_group="${SERVICE_GROUP:-${service_user}}"
+    local user_home="${SERVICE_USER_HOME:-${VAR_LIB_DIR}}"
+    local user_shell="${SERVICE_USER_SHELL:-/usr/sbin/nologin}"
+    local supplementary_groups="${SERVICE_SUPPLEMENTARY_GROUPS:-}"
+    local group
+
+    if [[ "${create_user}" != "true" ]]; then
         return 0
     fi
-    
-    if mkdir -p "${var_lib_dir}" 2>/dev/null; then
-        chmod 755 "${var_lib_dir}" 2>/dev/null || true
-        print_success "Created data directory: ${var_lib_dir}"
+
+    if [[ "${service_user}" == "root" ]]; then
+        print_info "SERVICE_USER=root; skipping user creation"
         return 0
+    fi
+
+    # Create primary group first (system group, -r)
+    if getent group "${service_group}" >/dev/null 2>&1; then
+        print_info "Group already exists: ${service_group}"
     else
-        print_error "Failed to create data directory: ${var_lib_dir}"
-        print_info "You may need to create it manually: sudo mkdir -p ${var_lib_dir}"
-        return 1
+        if groupadd --system "${service_group}"; then
+            print_success "Created system group: ${service_group}"
+        else
+            print_error "Failed to create group: ${service_group}"
+            return 1
+        fi
     fi
+
+    # Create user with the primary group
+    if getent passwd "${service_user}" >/dev/null 2>&1; then
+        print_info "User already exists: ${service_user}"
+    else
+        if useradd --system --gid "${service_group}" \
+                   --home-dir "${user_home}" --no-create-home \
+                   --shell "${user_shell}" "${service_user}"; then
+            print_success "Created system user: ${service_user} (group: ${service_group})"
+        else
+            print_error "Failed to create user: ${service_user}"
+            return 1
+        fi
+    fi
+
+    # Add supplementary groups (only those that exist on the system)
+    if [[ -n "${supplementary_groups}" ]]; then
+        for group in ${supplementary_groups}; do
+            if ! getent group "${group}" >/dev/null 2>&1; then
+                print_warning "Supplementary group not found: ${group} (skipping)"
+                continue
+            fi
+            if usermod --append --groups "${group}" "${service_user}"; then
+                print_info "Added ${service_user} to group: ${group}"
+            else
+                print_warning "Failed to add ${service_user} to group: ${group}"
+            fi
+        done
+    fi
+
+    return 0
 }
 
-setup_directories() {
-    local config_dir="${CONFIG_DIR:-"[CONFIG_DIR]"}"
-    local data_dir="${DATA_DIR:-"[DATA_DIR]"}"
+create_data_directory() {
+    local var_lib_dir="${VAR_LIB_DIR:-"[VAR_LIB_DIR]"}"
+    local service_user="${SERVICE_USER:-root}"
+    local service_group="${SERVICE_GROUP:-${service_user}}"
+    local dir_mode="755"
 
-    print_info "Setting up directories..."
-    
-    mkdir -p "${config_dir}" 2>/dev/null || true
-    mkdir -p "${data_dir}" 2>/dev/null || true
+    # Use DATA_DIR_MODE (from config.sh) when a shared group is configured
+    # so new files and subdirectories inherit the group automatically via SGID.
+    if [[ "${service_group}" != "${service_user}" ]]; then
+        dir_mode="${DATA_DIR_MODE:-2775}"
+    fi
+
+    print_info "Creating data directory: ${var_lib_dir}"
+
+    if [[ ! -d "${var_lib_dir}" ]]; then
+        if ! mkdir -p "${var_lib_dir}" 2>/dev/null; then
+            print_error "Failed to create data directory: ${var_lib_dir}"
+            print_info "You may need to create it manually: sudo mkdir -p ${var_lib_dir}"
+            return 1
+        fi
+        print_success "Created data directory: ${var_lib_dir}"
+    else
+        print_info "Data directory already exists"
+    fi
+
+    # Recursive: on reinstall/update, pre-existing files (e.g. SQLite DB from
+    # a previous root-owned install) must be transferred to the new user too,
+    # otherwise the service fails with "attempt to write a readonly database".
+    if [[ "${service_user}" != "root" ]]; then
+        if getent passwd "${service_user}" >/dev/null 2>&1; then
+            if chown -R "${service_user}:${service_group}" "${var_lib_dir}" 2>/dev/null; then
+                print_info "Set ownership recursively: ${service_user}:${service_group}"
+            else
+                print_warning "Failed to set ownership on ${var_lib_dir}"
+            fi
+        else
+            print_warning "Service user ${service_user} not found; skipping chown"
+        fi
+    fi
+
+    chmod "${dir_mode}" "${var_lib_dir}" 2>/dev/null || true
+
+    # Make existing data files group-writable so both the service user and
+    # admin processes (root via sudo) can update them without ownership
+    # drift. u+rwX: owner rw + exec/traverse dirs. g+rwX: same for group.
+    # Without this, a pre-existing mode-0644 SQLite DB (e.g. from a prior
+    # root-owned test run) would still lock out the service user after
+    # chown, because SQLite needs write access to the file itself.
+    if [[ -d "${var_lib_dir}" ]]; then
+        chmod -R u+rwX,g+rwX "${var_lib_dir}" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# Remove the dedicated service user and group created by create_service_user.
+#
+# Only called from do_purge() when SERVICE_CREATE_USER=true. Purge already
+# asks for confirmation upfront, so no second prompt here. Files still
+# owned by the user become orphaned (UID numbers); clean those up separately.
+remove_service_user() {
+    local create_user="${SERVICE_CREATE_USER:-false}"
+    local service_user="${SERVICE_USER:-root}"
+    local service_group="${SERVICE_GROUP:-${service_user}}"
+
+    if [[ "${create_user}" != "true" ]] || [[ "${service_user}" == "root" ]]; then
+        return 0
+    fi
+
+    if getent passwd "${service_user}" >/dev/null 2>&1; then
+        if userdel "${service_user}" 2>/dev/null; then
+            print_success "Removed user: ${service_user}"
+        else
+            print_warning "Failed to remove user: ${service_user}"
+        fi
+    fi
+
+    # Only remove group if different from user name and still exists.
+    # Skip if it has remaining members (shared group used by other users).
+    if [[ "${service_group}" != "${service_user}" ]] && \
+       getent group "${service_group}" >/dev/null 2>&1; then
+        local remaining_members
+        remaining_members=$(getent group "${service_group}" | cut -d: -f4)
+        if [[ -n "${remaining_members}" ]]; then
+            print_info "Keeping group '${service_group}' (still has members: ${remaining_members})"
+        elif groupdel "${service_group}" 2>/dev/null; then
+            print_success "Removed group: ${service_group}"
+        else
+            print_warning "Failed to remove group: ${service_group}"
+        fi
+    fi
+
+    return 0
 }
 
 backup_installation() {
@@ -361,13 +478,13 @@ install_files() {
                 type="${parts[2]}"
                 
                 if install_single_item "$source" "$dest" "$type"; then
-                    ((install_count++))
+                    install_count=$((install_count + 1))
                 else
-                    ((failed_count++))
+                    failed_count=$((failed_count + 1))
                 fi
             else
                 print_warning "Invalid install source format: $item"
-                ((failed_count++))
+                failed_count=$((failed_count + 1))
             fi
         done
     else
@@ -375,6 +492,7 @@ install_files() {
         print_info "Configure INSTALL_SOURCES array in config.sh"
     fi
     
+    # Report results
     if [[ $install_count -gt 0 ]]; then
         print_success "Successfully installed $install_count item(s)"
     fi
@@ -393,7 +511,7 @@ install_files() {
 }
 
 install_single_item() {
-    local _dir="${_DIR:-"_DIR"}"
+    local _dir="${_DIR:-"[DIR]"}"
     local source_path="$1"
     local dest_path="$2" 
     local item_type="$3"
@@ -465,6 +583,9 @@ create_service() {
     local service_restart="${SERVICE_RESTART:-on-failure}"
     local service_restart_sec="${SERVICE_RESTART_SEC:-5}"
     local service_user="${SERVICE_USER:-root}"
+    local service_group="${SERVICE_GROUP:-${service_user}}"
+    local service_umask="${SERVICE_UMASK:-}"
+    local service_supplementary_groups="${SERVICE_SUPPLEMENTARY_GROUPS:-}"
     local service_wanted_by="${SERVICE_WANTED_BY:-multi-user.target}"
     local service_path="${SERVICE_PATH:-/etc/systemd/system/${service_name}}"
 
@@ -487,9 +608,28 @@ After=${service_after}"
 [Service]
 Type=${service_type}
 User=${service_user}
-Group=${service_user}
+Group=${service_group}
 WorkingDirectory=${SHARE_DIR}"
 
+    # RuntimeDirectory creates /run/<name>/ at service start, owned by
+    # User:Group, and auto-removes it on stop. Required for non-root
+    # services that write PID files under /run.
+    service_content+="\nRuntimeDirectory=${SOFTWARE_DIR_NAME}"
+    if [[ "${service_group}" != "${service_user}" ]]; then
+        service_content+="\nRuntimeDirectoryMode=0775"
+    else
+        service_content+="\nRuntimeDirectoryMode=0755"
+    fi
+
+    if [[ -n "${service_umask}" ]]; then
+        service_content+="\nUMask=${service_umask}"
+    fi
+
+    if [[ -n "${service_supplementary_groups}" ]]; then
+        service_content+="\nSupplementaryGroups=${service_supplementary_groups}"
+    fi
+
+    # Add PIDFile for forking service type
     if [[ -n "${SERVICE_PIDFILE:-}" ]]; then
         service_content+="\nPIDFile=${SERVICE_PIDFILE}"
     fi
@@ -499,28 +639,68 @@ ExecStop=${service_exec_stop}"
 
     if [[ "${service_restart}" != "no" ]]; then
         service_content+="\nRestart=${service_restart}"
-        service_content+="\nRestartPreventExitStatus=0"
+        local prevent_exit="${SERVICE_RESTART_PREVENT_EXIT_STATUS:-0}"
+        if [[ -n "${prevent_exit}" ]]; then
+            service_content+="\nRestartPreventExitStatus=${prevent_exit}"
+        fi
         if [[ -n "${service_restart_sec}" ]] && [[ "${service_restart_sec}" != "0" ]]; then
             service_content+="\nRestartSec=${service_restart_sec}"
         fi
     fi
 
-    service_content+="\nTimeoutStartSec=60"
-    service_content+="\nTimeoutStopSec=15"
-    
-    service_content+="\nStandardOutput=journal"
-    service_content+="\nStandardError=journal"
-    service_content+="\nStandardInput=null"
+    local timeout_start="${SERVICE_TIMEOUT_START_SEC:-60}"
+    local timeout_stop="${SERVICE_TIMEOUT_STOP_SEC:-15}"
+    [[ -n "${timeout_start}" ]] && service_content+="\nTimeoutStartSec=${timeout_start}"
+    [[ -n "${timeout_stop}" ]] && service_content+="\nTimeoutStopSec=${timeout_stop}"
+
+    local std_output="${SERVICE_STANDARD_OUTPUT:-journal}"
+    local std_error="${SERVICE_STANDARD_ERROR:-journal}"
+    local std_input="${SERVICE_STANDARD_INPUT:-null}"
+    [[ -n "${std_output}" ]] && service_content+="\nStandardOutput=${std_output}"
+    [[ -n "${std_error}" ]] && service_content+="\nStandardError=${std_error}"
+    [[ -n "${std_input}" ]] && service_content+="\nStandardInput=${std_input}"
     service_content+="\nSyslogIdentifier=${SOFTWARE_DIR_NAME}"
-    
+
+    # Security hardening — see systemd.exec(5) and config.sh for details.
     service_content+="\n\n# Security hardening"
-    service_content+="\nNoNewPrivileges=true"
-    service_content+="\nPrivateTmp=true"
-    service_content+="\nProtectSystem=strict"
-    service_content+="\nProtectHome=true"
-    service_content+="\nReadWritePaths=${SHARE_DIR}"
-    service_content+="\nReadWritePaths=${VAR_LIB_DIR}"
-    service_content+="\nReadWritePaths=/run"
+    local no_new_privs="${SERVICE_NO_NEW_PRIVILEGES:-true}"
+    local private_tmp="${SERVICE_PRIVATE_TMP:-true}"
+    local protect_system="${SERVICE_PROTECT_SYSTEM:-full}"
+    local protect_home="${SERVICE_PROTECT_HOME:-}"
+    [[ -n "${no_new_privs}" ]] && service_content+="\nNoNewPrivileges=${no_new_privs}"
+    [[ -n "${private_tmp}" ]] && service_content+="\nPrivateTmp=${private_tmp}"
+    [[ -n "${protect_system}" ]] && service_content+="\nProtectSystem=${protect_system}"
+    [[ -n "${protect_home}" ]] && service_content+="\nProtectHome=${protect_home}"
+
+    # Optional: pre-create & chown/chmod data directories listed under keys
+    # in DATA_DIR_CONFIG_KEYS (space-separated) in the application config
+    # file. No-op when DATA_DIR_CONFIG_KEYS is empty. Applies DATA_DIR_MODE
+    # (default 2775) and ownership SERVICE_USER:SERVICE_GROUP.
+    if [[ -f "${CONFIG_FILE}" && -n "${DATA_DIR_CONFIG_KEYS:-}" ]]; then
+        local data_dir_mode="${DATA_DIR_MODE:-2775}"
+        local key dir_value
+        for key in ${DATA_DIR_CONFIG_KEYS}; do
+            dir_value=$(grep -E "^${key}\s*=" "${CONFIG_FILE}" 2>/dev/null \
+                | sed 's/^[^=]*=\s*"//;s/"\s*$//' | head -1)
+            if [[ -n "${dir_value}" ]]; then
+                if [[ ! -d "${dir_value}" ]]; then
+                    if mkdir -p "${dir_value}" 2>/dev/null; then
+                        print_info "Created ${key}: ${dir_value}"
+                    else
+                        print_warning "Failed to create ${key}: ${dir_value}"
+                    fi
+                fi
+                if [[ -d "${dir_value}" && "${SERVICE_USER}" != "root" ]]; then
+                    if getent passwd "${SERVICE_USER}" >/dev/null 2>&1; then
+                        chown "${SERVICE_USER}:${SERVICE_GROUP:-${SERVICE_USER}}" "${dir_value}" 2>/dev/null || \
+                            print_warning "Failed to chown ${dir_value}"
+                    fi
+                fi
+                chmod "${data_dir_mode}" "${dir_value}" 2>/dev/null || \
+                    print_warning "Failed to chmod ${data_dir_mode} ${dir_value}"
+            fi
+        done
+    fi
     
     service_content+="\n
 [Install]
@@ -533,6 +713,7 @@ WantedBy=${service_wanted_by}"
             print_info "  • Type: ${service_type}"
             print_info "  • Executable: ${service_exec_start}"
             print_info "  • User: ${service_user:-root}"
+            print_info "  • Group: ${service_group:-${service_user:-root}}"
             print_info "  • Restart: ${service_restart}"
         else
             print_warning "Service created, failed to reload systemd daemon"

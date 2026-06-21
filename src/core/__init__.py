@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Core module for IONOS-DYNDNS.
+"""Core module for DynDNS.
 
 This module provides the core functionality including configuration management,
 database operations, logging, encryption, and custom exceptions.
@@ -15,7 +15,7 @@ Modules:
 Typical usage:
     >>> from src.core import ConfigManager, Database, LoggerManager
     >>> config = ConfigManager('/app', '/app/config.toml')
-    >>> logger = LoggerManager.get_logger('ionos-dyndns')
+    >>> logger = LoggerManager.get_logger('dyndns')
 
 Author: Manuel Ziel
 License: MIT
@@ -25,10 +25,7 @@ License: MIT
 # PACKAGE IMPORTS
 ################################################################################
 
-from .config import ConfigManager
-from .database import Database
-from .encryption import EncryptionManager
-from .logger import LoggerManager
+# Local Imports
 from .exceptions import (
     DynDNSException,
     DatabaseError,
@@ -41,13 +38,32 @@ from .exceptions import (
     ValidationError
 )
 from .constants import (
+    AppSettings,
     SyncStatus,
     UpdateStatus,
     RecordType,
     PlaceholderIP,
     Subdomain,
-    ExportFormat
+    ExportFormat,
+    HTTPMethod,
+    HTTPStatus,
+    HTTPHeader,
+    HTTPHeaderValue,
+    EnvKeys,
+    SystemDefaults,
+    EncryptionDefaults,
+    AppPaths,
+    ProviderAPI,
+    NetworkAPI,
+    DNSDefaults,
+    DaemonDefaults,
+    DatabaseDefaults
 )
+from .logger import LoggerManager
+from .ownership import ensure_service_ownership
+from .encryption import EncryptionManager
+from .database import Database
+from .config import ConfigManager
 
 ################################################################################
 # PUBLIC API
@@ -59,6 +75,8 @@ __all__ = [
     'Database',
     'EncryptionManager',
     'LoggerManager',
+    # Helpers
+    'ensure_service_ownership',
     # Exceptions
     'DynDNSException',
     'DatabaseError',
@@ -70,10 +88,24 @@ __all__ = [
     'ZoneNotFoundError',
     'ValidationError',
     # Constants
+    'AppSettings',
     'SyncStatus',
     'UpdateStatus',
     'RecordType',
     'PlaceholderIP',
     'Subdomain',
     'ExportFormat',
+    'HTTPMethod',
+    'HTTPStatus',
+    'HTTPHeader',
+    'HTTPHeaderValue',
+    'EnvKeys',
+    'SystemDefaults',
+    'EncryptionDefaults',
+    'AppPaths',
+    'ProviderAPI',
+    'NetworkAPI',
+    'DNSDefaults',
+    'DaemonDefaults',
+    'DatabaseDefaults',
 ]

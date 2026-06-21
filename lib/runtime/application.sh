@@ -1,7 +1,7 @@
 #!/bin/bash
-# lib/runtime/application.sh - Application runtime functions
+# lib/runtime/application.sh - Application control functions
 #
-# IONOS-DYNDNS
+# DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
@@ -14,7 +14,29 @@
 
 do_main_work() {
     start_python_application "$@"
-    
+
+    return 0
+}
+
+# Return 0 if start/stop/restart should be delegated to systemctl.
+# True when a systemd unit is installed AND SERVICE_USER differs from the
+# current user. Running the daemon directly as root in that case would
+# create data files with the wrong ownership and break the next
+# systemd-managed start with "readonly database" or similar errors.
+should_delegate_to_systemctl() {
+    local service_user="${SERVICE_USER:-root}"
+    local service_name="${SERVICE_NAME:-${SOFTWARE_DIR_NAME}.service}"
+
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 1
+    fi
+    if ! systemctl list-unit-files --no-legend "${service_name}" 2>/dev/null \
+            | grep -q "^${service_name}"; then
+        return 1
+    fi
+    if [[ -z "${service_user}" || "${service_user}" == "$(id -un)" ]]; then
+        return 1
+    fi
     return 0
 }
 
@@ -34,35 +56,51 @@ send_signal() {
         return 1
     fi
     
-    # Process accessible without sudo
     kill -"${signal}" "${pid}" 2>/dev/null
     return 0
 }
 
 start_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+    local service_name="${SERVICE_NAME:-${SOFTWARE_DIR_NAME}.service}"
 
     print_info "Starting ${software_name}..."
-    
+
     if is_running; then
         print_warning "${software_name} is already running"
         return 0
     fi
-    
+
+    # Delegate to systemd so the daemon runs under the configured SERVICE_USER
+    # instead of the invoking root shell (prevents root-owned data files).
+    if should_delegate_to_systemctl; then
+        print_info "Delegating to systemd: systemctl start ${service_name}"
+        service_start
+        return $?
+    fi
+
     do_main_work "$@"
 }
 
 stop_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+    local service_name="${SERVICE_NAME:-${SOFTWARE_DIR_NAME}.service}"
     local pid_file="${PID_FILE}"
     local python_script="${PYTHON_SCRIPT}"
     local count=0
     local max_wait=10
+
+    print_info "Stopping ${software_name}..."
+
+    if should_delegate_to_systemctl; then
+        print_info "Delegating to systemd: systemctl stop ${service_name}"
+        service_stop
+        return $?
+    fi
+
     local all_pids=$(pgrep -f "^python3 .*${python_script}" || true)
     local remaining_pids
     local pid_list=""
-    
-    print_info "Stopping ${software_name}..."
     
     # Format PIDs as comma-separated list for better readability
     if [[ -n "${all_pids}" ]]; then
@@ -75,12 +113,12 @@ stop_application() {
         return 0
     fi
 
-    # Send TERM signal to all processes
+    print_info "Sending termination signal to processes..."
     for pid in ${all_pids}; do
         send_signal "${pid}" "TERM"
     done
 
-    # Wait for shutdown
+    print_info "Waiting to terminate the processes..."
     while [[ ${count} -lt ${max_wait} ]]; do
         remaining_pids=$(pgrep -f "^python3 .*${python_script}" || true)
         if [[ -z "${remaining_pids}" ]]; then
@@ -100,6 +138,7 @@ stop_application() {
         sleep 1
     fi
 
+    print_info "Cleaning up..."
     remove_pid_file
 
     if [[ -z "${remaining_pids}" ]]; then
@@ -118,32 +157,7 @@ restart_application() {
     stop_application
     sleep "${restart_delay}"
 
-    # Pass all arguments to start
     start_application "$@"
-}
-
-################################################################################
-# ADVANCED APPLICATION CONTROL
-################################################################################
-
-run_application() {
-    local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-
-    setup_signal_handlers
-
-    print_info "${software_name} starting main loop..."
-
-    while true; do
-        if ! do_main_work; then
-            print_error "Main work failed, retrying in 10 seconds..."
-            sleep 10
-            continue
-        fi
-        
-        break
-    done
-
-    print_info "${software_name} finished"
 }
 
 ################################################################################
@@ -154,29 +168,29 @@ configure_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local config_file="${CONFIG_FILE:-"[CONFIG_FILE]"}"
     local pid_file="${PID_FILE}"
-    
+
     print_section "Configuring ${software_name}"
-    
+
     if is_running; then
         print_info "Daemon is currently ${GREEN}running${NC}"
         print_info "Configuration changes may require daemon restart to take effect"
     else
         print_info "Daemon is currently ${DIM}not running${NC}"
     fi
-    
+
     echo ""
     print_info "Configuration options:"
     echo "  • Config file: ${config_file}"
     echo ""
-    
+
     print_info "Starting interactive configuration menu..."
-    
+
     if [[ ${ENABLE_PYTHON:-0} -eq 1 ]]; then
         start_python_cli "config"
     else
         print_warning "Python support not enabled"
         print_info "Edit configuration files manually"
     fi
-    
+
     return 0
 }

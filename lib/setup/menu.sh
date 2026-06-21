@@ -1,7 +1,7 @@
 #!/bin/bash
 # lib/setup/menu.sh - Interactive menu functions
 #
-# IONOS-DYNDNS
+# DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
@@ -14,9 +14,6 @@
 
 show_interactive_menu() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-    local version="${VERSION:-"[VERSION]"}"
-    local description="${SOFTWARE_DESCRIPTION:-"[SOFTWARE_DESCRIPTION]"}"
-    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
     local choice
     local options=()
     local option_actions=()
@@ -26,7 +23,6 @@ show_interactive_menu() {
     while true; do
         clear
         print_banner "Setup"
-        
         show_status
         
         options=()
@@ -49,29 +45,6 @@ show_interactive_menu() {
             options+=("${option_num}) Purge")
             option_actions+=("purge")
             ((option_num++))
-            
-            # Service management options
-            if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[SERVICE_NAME]" ]]; then
-                if service_active; then
-                    options+=("${option_num}) Stop service")
-                    option_actions+=("stop")
-                    ((option_num++))
-                else
-                    options+=("${option_num}) Start service")
-                    option_actions+=("start")
-                    ((option_num++))
-                fi
-                
-                if service_enabled; then
-                    options+=("${option_num}) Disable auto-start")
-                    option_actions+=("disable")
-                    ((option_num++))
-                else
-                    options+=("${option_num}) Enable auto-start")
-                    option_actions+=("enable")
-                    ((option_num++))
-                fi
-            fi
 
             options+=("${option_num}) View detailed status")
             option_actions+=("status")
@@ -147,34 +120,6 @@ show_interactive_menu() {
                     do_purge
                     break
                     ;;
-                "start")
-                    if service_start; then
-                        print_success "Service started successfully"
-                    else
-                        print_error "Failed to start service"
-                    fi
-                    ;;
-                "stop")
-                    if service_stop; then
-                        print_success "Service stopped successfully"
-                    else
-                        print_error "Failed to stop service"
-                    fi
-                    ;;
-                "enable")
-                    if service_enable; then
-                        print_success "Auto-start enabled"
-                    else
-                        print_error "Failed to enable auto-start"
-                    fi
-                    ;;
-                "disable")
-                    if service_disable; then
-                        print_success "Auto-start disabled"
-                    else
-                        print_error "Failed to disable auto-start"
-                    fi
-                    ;;
                 "status")
                     show_status
                     ;;
@@ -218,7 +163,7 @@ show_help() {
     echo "Actions:"
     echo "  install                     Install ${software_name}"
     echo "  update                      Update to latest version"
-    echo "  reinstall                   Reinstall"
+    echo "  reinstall                   Reinstall current version"
     echo "  uninstall                   Uninstall ${software_name}"
     echo "  purge                       Completely remove including all data"
     echo "  status                      Show installation status"

@@ -1,7 +1,7 @@
 #!/bin/bash
 # lib/runtime/menu.sh - Interactive menu functions
 #
-# IONOS-DYNDNS
+# DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
@@ -46,19 +46,11 @@ show_interactive_menu() {
         option_actions+=("restart_application")
         ((option_num++))
 
-        options+=("${option_num}) Show Recent Logs")
-        option_actions+=("show_recent_logs")
-        ((option_num++))
-
-        options+=("${option_num}) Show Live Logs")
-        option_actions+=("show_live_logs")
-        ((option_num++))
-
         options+=("${option_num}) Setup Virtual Environment")
         option_actions+=("setup_virtual_environment")
         ((option_num++))
 
-        options+=("${option_num}) Configure ")
+        options+=("${option_num}) Configure")
         option_actions+=("configure_application")
         ((option_num++))
 
@@ -106,12 +98,6 @@ show_interactive_menu() {
                     export DAEMON_MODE=1
                     restart_application
                     ;;
-                "show_recent_logs")
-                    show_recent_logs
-                    ;;
-                "show_live_logs")
-                    show_live_logs
-                    ;;
                 "setup_virtual_environment")
                     if [[ ${enable_python} -eq 1 ]]; then
                         setup_virtual_environment
@@ -141,7 +127,7 @@ show_interactive_menu() {
             print_error "Invalid selection. Enter a number between 0 and ${max_choice}."
         fi
 
-        if [[ "${action:-}" != "exit" ]]; then
+        if [[ "${action:-}" != "exit" ]] && [[ "${action:-}" != "configure_application" ]] && [[ "${action:-}" != "restart_application" ]]; then
             echo ""
             read -rp "Press Enter to continue..." 
         fi
@@ -162,32 +148,33 @@ show_help() {
     echo "Usage: ${cmd_name} [ACTION] [OPTIONS]"
     echo ""
     echo "Actions:"
-    echo "  start                   # Start ${software_name}"
-    echo "  stop                    # Stop ${software_name}"
-    echo "  restart                 # Restart ${software_name}"
-    echo "  recent-logs             # Show recent ${software_name} logs"
-    echo "  live-logs               # Show live ${software_name} logs"
-    echo "  setup-env               # Setup Python virtual environment"
-    echo "  config                  # Configure ${software_name}"
-    echo "  status                  # Show ${software_name} status"
-    echo "  help, --help, -h        # Show this help"
-    echo "  version                 # Show version information"
+    echo "  start                            # Start ${software_name}"
+    echo "  stop                             # Stop ${software_name}"
+    echo "  restart                          # Restart ${software_name}"
+    echo "  setup-env                        # Setup Python virtual environment"
+    echo "  config                           # Configure ${software_name}"
+    echo "  status                           # Show ${software_name} status"
+    echo "  help, --help, -h                 # Show this help"
+    echo "  version                          # Show version information"
     echo ""
     echo "Options:"
-    echo "  --interactive, -i       # Force interactive mode"
-    echo "  --daemon, -d            # Run in daemon mode (for start action)"
-    echo "  --quiet, -q             # Quiet mode (suppress output)"
-    echo "  --help, -h              # Show this help"
-    echo "  --version, -v           # Show version information"
+    echo "  --interactive, -i                # Force interactive mode"
+    echo "  --daemon, -d                     # Run in daemon mode (for start action)"
+    echo "  --quiet, -q                      # Quiet mode (suppress output)"
+    echo "  --version, -v                    # Show version information"
+    echo "  --help, -h                       # Show this help"
     echo ""
     echo "Examples:"
     echo "  ${cmd_name} start                # Start ${software_name}"
     echo "  ${cmd_name} start --daemon       # Start as daemon"
     echo "  ${cmd_name} stop                 # Stop ${software_name}"
     echo "  ${cmd_name} restart              # Restart ${software_name}"
-    echo "  ${cmd_name} recent-logs          # Show recent logs"
-    echo "  ${cmd_name} live-logs            # Show live logs"
     echo "  ${cmd_name} setup-env            # Setup Python virtual environment"
+    echo ""
+    echo "View logs:"
+    echo "  sudo journalctl -u ${SERVICE_NAME:-${cmd_name}} -n 50 --no-pager"
+    echo "  sudo journalctl -u ${SERVICE_NAME:-${cmd_name}} -f"
+    echo ""
     echo "  ${cmd_name} config               # Configure application"
     echo "  ${cmd_name} status               # Show status"
     echo "  ${cmd_name} --interactive        # Show interactive menu"
@@ -198,7 +185,6 @@ show_help() {
 
 show_status() {
     local install_path="${INSTALL_PATH:-"[INSTALL_PATH]"}"
-    local pid_file="${PID_FILE:-"[PID_FILE]"}"
     local config_file="${CONFIG_FILE:-"[CONFIG_FILE]"}"
 
     show_software_status
@@ -210,5 +196,4 @@ show_status() {
     echo "Configuration:"
     echo "  Install path:  ${install_path}"
     echo "  Config file:   ${config_file}"
-    echo "  PID file:      ${pid_file}"
 }

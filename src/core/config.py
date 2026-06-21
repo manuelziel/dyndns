@@ -17,61 +17,17 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard library imports
+# Standard Imports
 import logging
 import os
 import tomllib
 from typing import Dict, Any, Optional
 
-# Local imports
+# Local Imports
 from .exceptions import ConfigError
 from .database import Database
+from .constants import AppPaths, ProviderAPI, NetworkAPI, DNSDefaults, DaemonDefaults
 
-################################################################################
-# CONSTANTS - Default Values & Internal Settings
-################################################################################
-
-# Default app settings
-DEFAULT_APP_NAME = "IONOS DynDNS"
-DEFAULT_APP_AUTHOR = "Manuel Ziel"
-
-# Default data directory
-# All relative paths are resolved relative to this base directory
-DEFAULT_DATA_DIR = "/var/lib/ionos-dyndns/"
-
-# Default database path
-DEFAULT_DB_PATH = "ionos-dyndns.db"
-
-# Default debug level
-DEFAULT_LOG_LEVEL = "INFO"
-DEFAULT_CONSOLE_COLORS = True
-
-# Default API settings
-DEFAULT_API_BASE_URL = "https://api.hosting.ionos.com/dns/v1"
-DEFAULT_API_TIMEOUT = 30  # seconds
-DEFAULT_API_RETRY_ATTEMPTS = 3
-
-# Default network settings
-DEFAULT_IPV4_ENABLED = True
-DEFAULT_IPV6_ENABLED = True
-DEFAULT_IPV4_DETECTION_URL = "https://api.ipify.org"
-DEFAULT_IPV6_DETECTION_URL = "https://api6.ipify.org"
-DEFAULT_NETWORK_TIMEOUT = 10  # seconds
-DEFAULT_NETWORK_RETRY_ATTEMPTS = 3
-
-# Default dns settings
-DEFAULT_DNS_DEFAULT_TTL = 3600  # seconds
-
-# Default daemon settings
-DEFAULT_DEAMON_ENABLED = False
-DEFAULT_DAEMON_CHECK_INTERVAL = 300  # seconds
-DEFAULT_DAEMON_MAX_RETRIES = 3
-DEFAULT_DAEMON_RETRY_DELAY = 60  # seconds
-DEFAULT_FORCE_UPDATE_INTERVAL = 86400  # seconds
-DEFAULT_DAEMON_SYNC_CHECKS = True
-
-# DEFAULT ENCRYPTION SETTINGS
-DEFAULT_ENCRYPTION_KEY_PATH = ".encryption_key"
 
 ################################################################################
 # CONFIGURATION MANAGER CLASS - TOML Configuration with Environment Integration
@@ -113,6 +69,7 @@ class ConfigManager:
 
         self._init_database()
 
+
     ################################################################################
     # PUBLIC INTERFACE - Configuration Loading and Management
     ################################################################################
@@ -140,6 +97,7 @@ class ConfigManager:
         except Exception as e:
             raise ConfigError(f"Error loading configuration from {path}: {e}")
 
+
     ################################################################################
     # PRIVATE METHODS - Configuration Initialization
     ################################################################################
@@ -157,42 +115,48 @@ class ConfigManager:
         except Exception as e:
             raise ConfigError(f"Database initialization failed: {e}")
 
+
     ################################################################################
     # PRIVATE METHODS - Configuration Section Loaders
     ################################################################################
 
     def _load_debug_config(self) -> None:
         """Load debug configuration settings from TOML."""
-        self.log_level = self.config.get("debug", {}).get("level", DEFAULT_LOG_LEVEL)
-        self.console_colors = self.config.get("debug", {}).get("console_colors", DEFAULT_CONSOLE_COLORS)
+        self.log_level = self.config.get("debug", {}).get("level", "INFO")
+        self.console_colors = self.config.get("debug", {}).get("console_colors", True)
+
 
     def _load_api_config(self) -> None:
         """Load API configuration settings from TOML."""
-        self.provider_api_base_url = self.config.get("provider_api", {}).get("base_url", DEFAULT_API_BASE_URL)
-        self.provider_api_timeout = self.config.get("provider_api", {}).get("timeout", DEFAULT_API_TIMEOUT)
-        self.provider_api_retry_attempts = self.config.get("provider_api", {}).get("retry_attempts", DEFAULT_API_RETRY_ATTEMPTS)
+        self.provider_api_base_url = self.config.get("provider_api", {}).get("base_url", ProviderAPI.BASE_URL)
+        self.provider_api_timeout = self.config.get("provider_api", {}).get("timeout", ProviderAPI.TIMEOUT)
+        self.provider_api_retry_attempts = self.config.get("provider_api", {}).get("retry_attempts", ProviderAPI.RETRY_ATTEMPTS)
+
 
     def _load_network_config(self) -> None:
         """Load network configuration settings from TOML."""
-        self.network_ipv4_enabled = self.config.get("network", {}).get("ipv4_enabled", DEFAULT_IPV4_ENABLED)
-        self.network_ipv6_enabled = self.config.get("network", {}).get("ipv6_enabled", DEFAULT_IPV6_ENABLED)
-        self.network_ipv4_detection_url = self.config.get("network", {}).get("ipv4_detection_url", DEFAULT_IPV4_DETECTION_URL)
-        self.network_ipv6_detection_url = self.config.get("network", {}).get("ipv6_detection_url", DEFAULT_IPV6_DETECTION_URL)
-        self.network_timeout = self.config.get("network", {}).get("timeout", DEFAULT_NETWORK_TIMEOUT)
-        self.network_retry_attempts = self.config.get("network", {}).get("retry_attempts", DEFAULT_NETWORK_RETRY_ATTEMPTS)
+        self.network_ipv4_enabled = self.config.get("network", {}).get("ipv4_enabled", True)
+        self.network_ipv6_enabled = self.config.get("network", {}).get("ipv6_enabled", True)
+        self.network_ipv4_detection_url = self.config.get("network", {}).get("ipv4_detection_url", NetworkAPI.IPV4_URL)
+        self.network_ipv6_detection_url = self.config.get("network", {}).get("ipv6_detection_url", NetworkAPI.IPV6_URL)
+        self.network_timeout = self.config.get("network", {}).get("timeout", NetworkAPI.TIMEOUT)
+        self.network_retry_attempts = self.config.get("network", {}).get("retry_attempts", NetworkAPI.RETRY_ATTEMPTS)
+
 
     def _load_dns_config(self) -> None:
         """Load DNS configuration settings from TOML."""
-        self.dns_default_ttl = self.config.get("dns", {}).get("default_ttl", DEFAULT_DNS_DEFAULT_TTL)
+        self.dns_default_ttl = self.config.get("dns", {}).get("default_ttl", DNSDefaults.DEFAULT_TTL)
+
 
     def _load_daemon_config(self) -> None:
         """Load daemon configuration settings from TOML."""
-        self.daemon_enabled = self.config.get("daemon", {}).get("enabled", DEFAULT_DEAMON_ENABLED)
-        self.daemon_check_interval = self.config.get("daemon", {}).get("check_interval", DEFAULT_DAEMON_CHECK_INTERVAL)
-        self.daemon_max_retries = self.config.get("daemon", {}).get("max_retries", DEFAULT_DAEMON_MAX_RETRIES)
-        self.daemon_retry_delay = self.config.get("daemon", {}).get("retry_delay", DEFAULT_DAEMON_RETRY_DELAY)
-        self.force_update_interval = self.config.get("daemon", {}).get("force_update_interval", DEFAULT_FORCE_UPDATE_INTERVAL)
-        self.daemon_sync_checks = self.config.get("daemon", {}).get("sync_checks", DEFAULT_DAEMON_SYNC_CHECKS)
+        self.daemon_enabled = self.config.get("daemon", {}).get("enabled", DaemonDefaults.ENABLED)
+        self.daemon_check_interval = self.config.get("daemon", {}).get("check_interval", DaemonDefaults.CHECK_INTERVAL)
+        self.daemon_max_retries = self.config.get("daemon", {}).get("max_retries", DaemonDefaults.MAX_RETRIES)
+        self.daemon_retry_delay = self.config.get("daemon", {}).get("retry_delay", DaemonDefaults.RETRY_DELAY)
+        self.force_update_interval = self.config.get("daemon", {}).get("force_update_interval", DaemonDefaults.FORCE_UPDATE_INTERVAL)
+        self.daemon_sync_checks = self.config.get("daemon", {}).get("sync_checks", DaemonDefaults.SYNC_CHECKS)
+        
         
     def _load_database_config(self, current_dir: str) -> None:
         """Load database configuration with FHS-compliant path resolution.
@@ -203,8 +167,8 @@ class ConfigManager:
         Args:
             current_dir: Base directory (unused, kept for API compatibility).
         """
-        db_path = self.config.get("database", {}).get("db_path", DEFAULT_DB_PATH)
-        self.db_path = db_path if os.path.isabs(db_path) else os.path.join(DEFAULT_DATA_DIR, db_path)
+        db_path = self.config.get("database", {}).get("db_path", AppPaths.DB_FILE)
+        self.db_path = db_path if os.path.isabs(db_path) else os.path.join(AppPaths.DATA_DIR, db_path)
         
-        key_file = self.config.get("database", {}).get("encryption_key_path", DEFAULT_ENCRYPTION_KEY_PATH)
-        self.encryption_key_path = key_file if os.path.isabs(key_file) else os.path.join(DEFAULT_DATA_DIR, key_file)
+        key_file = self.config.get("database", {}).get("encryption_key_path", AppPaths.ENCRYPTION_KEY_FILE)
+        self.encryption_key_path = key_file if os.path.isabs(key_file) else os.path.join(AppPaths.DATA_DIR, key_file)

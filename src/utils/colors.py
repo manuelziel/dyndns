@@ -92,14 +92,16 @@ LOG_COLORS: dict[str, str] = {
 
 #: Mapping of log levels to Unicode symbols.
 #: Used by ColoredFormatter in logger.py to prefix log messages.
-#: Symbols provide visual distinction between log levels.
+#: Level symbols are intentionally empty: color already conveys the level,
+#: and a redundant checkmark/cross on every line dilutes its signal value.
+#: BULLET and ARROW remain as semantic list/transition markers.
 LOG_SYMBOLS: dict[str, str] = {
-    'DEBUG': 'd',
-    'INFO': 'ℹ',
-    'WARNING': '✗',
-    'ERROR': '✗',
-    'CRITICAL': '✗',
-    'SUCCESS': '✓',
+    'DEBUG': '',
+    'INFO': '',
+    'WARNING': '',
+    'ERROR': '',
+    'CRITICAL': '',
+    'SUCCESS': '',
     'BULLET': '*',
     'ARROW': '>'
 }

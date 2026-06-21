@@ -1,7 +1,7 @@
 #!/bin/bash
-# lib/core/essentials.sh - Core utilities and system checks
+# lib/core/essentials.sh - Essential utility functions
 #
-# IONOS-DYNDNS
+# DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
@@ -19,6 +19,31 @@ check_root() {
         return 1
     fi
     return 0
+}
+
+# Check if the current user is allowed to run the application at runtime.
+# Accepts root (EUID 0) or the configured SERVICE_USER (when set and not root).
+# Use this for start/stop/restart instead of check_root so the systemd service
+# can launch as an unprivileged dedicated user.
+check_runtime_user() {
+    local service_user="${SERVICE_USER:-root}"
+
+    if [[ ${EUID} -eq 0 ]]; then
+        return 0
+    fi
+
+    if [[ -n "${service_user}" && "${service_user}" != "root" ]]; then
+        if [[ "$(id -un)" == "${service_user}" ]]; then
+            return 0
+        fi
+        print_error "This operation must run as root or as '${service_user}'"
+        print_info "Run with sudo: sudo $0 $*"
+        return 1
+    fi
+
+    print_error "This operation requires root privileges"
+    print_info "Run with sudo: sudo $0 $*"
+    return 1
 }
 
 ################################################################################
@@ -39,6 +64,24 @@ detect_package_manager() {
     else
         echo "unknown"
     fi
+}
+
+is_package_installed() {
+    local package="$1"
+    local package_manager=$(detect_package_manager)
+
+    case "${package_manager}" in
+        "apt")
+            dpkg -l "${package}" 2>/dev/null | grep -q "^ii" ;;
+        "dnf"|"yum")
+            rpm -q "${package}" &>/dev/null ;;
+        "pacman")
+            pacman -Q "${package}" &>/dev/null ;;
+        "zypper")
+            rpm -q "${package}" &>/dev/null ;;
+        *)
+            return 1 ;;
+    esac
 }
 
 get_package_name_for_key() {
@@ -62,44 +105,6 @@ get_package_name_for_key() {
         "zypper")  echo "${parts[3]:-${parts[0]}}" ;;
         *)         echo "${parts[0]}" ;;
     esac
-}
-
-is_package_installed() {
-    local package="$1"
-    local package_manager=$(detect_package_manager)
-
-    case "${package_manager}" in
-        "apt")
-            dpkg -l "${package}" 2>/dev/null | grep -q "^ii" ;;
-        "dnf"|"yum")
-            rpm -q "${package}" &>/dev/null ;;
-        "pacman")
-            pacman -Q "${package}" &>/dev/null ;;
-        "zypper")
-            rpm -q "${package}" &>/dev/null ;;
-        *)
-            return 1 ;;
-    esac
-}
-
-has_systemd_service() {
-    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
-
-    if command -v systemctl &>/dev/null; then
-        systemctl list-unit-files "${service_name}.service" &>/dev/null 2>&1
-    else
-        return 1
-    fi
-}
-
-is_systemd_service_active() {
-    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
-
-    if command -v systemctl &>/dev/null; then
-        systemctl is-active "${service_name}.service" &>/dev/null
-    else
-        return 1
-    fi
 }
 
 check_dependencies() {
@@ -130,7 +135,7 @@ is_installed() {
 }
 
 get_installed_version() {
-    local bin_symlink="${BIN_SYMLINK}"
+    local bin_symlink="${BIN_SYMLINK:-"[BIN_SYMLINK]"}"
     
     if is_installed; then
         if [[ -x "${bin_symlink}" ]]; then
@@ -207,11 +212,15 @@ service_disable() {
 service_start() {
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
 
-    if systemctl start --quiet "${service_name}"; then
+    if service_active; then
+        return 0
+    fi
+
+    if systemctl start "${service_name}"; then
         return 0
     else
         return 1
-    fi    
+    fi
 }
 
 service_restart() {
@@ -221,7 +230,7 @@ service_restart() {
         return 0
     else
         return 1
-    fi    
+    fi
 }
 
 service_stop() {
@@ -267,7 +276,7 @@ get_service_status() {
 }
 
 ################################################################################
-# MENU & SERVICE STATUS
+# MENU & VERSION
 ################################################################################
 
 show_software_status() {
@@ -277,7 +286,7 @@ show_software_status() {
     local modified="$(stat -c %y "${install_path}" 2>/dev/null | cut -d. -f1)"
 
     if is_installed; then
-        print_status_line "Installed version" "${BLUE}" "ℹ" " v${version}"
+        print_status_line "Installed" "${BLUE}" "ℹ" " v${version}"
         print_status_line "Location" "${BLUE}" "ℹ" "${install_path}"
 
         if [[ -f "${install_path}" ]]; then
@@ -324,6 +333,15 @@ show_service_status() {
 show_daemon_status() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local pid="$(cat "${PID_FILE}" 2>/dev/null)"
+    
+    # If no PID file, try to find process
+    if [[ -z "${pid}" ]]; then
+        local python_script="${PYTHON_SCRIPT}"
+        # Disable errexit: pgrep returns exit 1 when no processes found
+        set +e
+        pid=$(pgrep -f "^python3 .*${python_script}" | head -n1)
+        set -e
+    fi
     
     if is_running; then
         print_success "${software_name} is running (PID: ${pid:-'unknown'})"

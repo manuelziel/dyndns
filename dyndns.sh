@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# IONOS-DYNDNS
+# DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
@@ -9,6 +9,12 @@
 
 # Enable strict error handling
 set -euo pipefail
+
+# Ensure files created by this script (DB, config, logs) are group-writable.
+# The service may run as SERVICE_USER:SERVICE_GROUP; a root-invoked menu
+# action must not leave behind mode-0644 files that lock out the service
+# user. 0002 = rw-rw-r-- / rwxrwxr-x.
+umask 0002
 
 readonly _DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -84,7 +90,7 @@ cleanup_and_exit() {
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-            start)
+            start|stop|restart)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
                     shift
@@ -94,7 +100,7 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-            stop)
+            setup-env|config)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
                     shift
@@ -104,69 +110,8 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-            restart)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="$1"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            recent-logs)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="$1"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            live-logs)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="$1"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            setup-env)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="$1"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            config)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="$1"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            import)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="$1"
-                    shift
-                    CLI_ARGS=("$@")
-                    break
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            export)
+            # CLI commands — pass remaining args to Python CLI
+            import|export)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
                     shift
@@ -227,7 +172,7 @@ parse_arguments() {
                 PYTHON_ARGS=("$@")
                 break
                 ;;
-                
+
             # Error handling
             -*)
                 print_error "Unknown option: $1"
@@ -241,17 +186,14 @@ parse_arguments() {
                 ;;
         esac
     done
-    
+
+    # Handle default action based on flags
     if [[ -z "${ACTION:-}" ]]; then
         if [[ $DAEMON_MODE -eq 1 ]]; then
             ACTION="start"
         else
             ACTION="interactive"
         fi
-    fi
-    
-    if [[ $DAEMON_MODE -eq 1 ]]; then
-        export DAEMON_MODE=1
     fi
 }
 
@@ -272,11 +214,11 @@ main() {
     esac
     
     if [[ "$requires_root" == true ]]; then
-        if ! check_root; then
+        if ! check_runtime_user; then
             cleanup_and_exit 1
         fi
     fi
-    
+
     case "$ACTION" in
         start)
             if [[ $DAEMON_MODE -eq 1 ]]; then
@@ -290,12 +232,6 @@ main() {
             ;;
         restart)
             restart_application "${PYTHON_ARGS[@]}"
-            ;;
-        recent-logs)
-            show_recent_logs
-            ;;
-        live-logs)
-            show_live_logs
             ;;
         setup-env)
             setup_python_environment

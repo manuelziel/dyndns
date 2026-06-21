@@ -4,9 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.3-alpha05] - 2026-06-18
+### Added
+- Dedicated service user/group with systemd hardening
+- Post-write ownership handoff helper (`src/core/ownership.py`) for encryption key and database
+
+### Changed
+- Renamed `ionos-dyndns` -> `dyndns` (IONOS is the provider, not the software name). Reinstall required.
+- Bash library synced with `cowapi` reference
+- `SERVICE_TYPE=forking`, `SERVICE_RESTART_SEC=5`, daemon startup delay 3s
+- Venv moved to `/var/lib/dyndns/venv`
+- Admin CLI (`config`/`import`/`export`) runs as caller; Python hands off file ownership to service user after write
+
+### Removed
+- `recent-logs` / `live-logs` commands (use `journalctl -u dyndns`)
+- Service lifecycle actions from setup menu
+
 ## [1.0.3alpha04] - 2026-03-17
 ### Fixed
-- Fix dobble logging 
+- Fix double logging 
 - Fix comments
 - Standardized help/version order
 

@@ -16,10 +16,14 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
+# Standard Imports
 import requests
 import time
 import logging
 from typing import Optional, Tuple, Dict, Any
+
+# Local Imports
+from src.core.constants import HTTPStatus, NetworkAPI
 
 ################################################################################
 # NETWORK DATA CLASS - IP Detection and State Management
@@ -56,19 +60,18 @@ class NetworkData:
         self.config = config
         self.logger = logger if logger else logging.getLogger(__name__)
         
-        # IP address state
         self.ipv4_address: Optional[str] = None
         self.ipv6_address: Optional[str] = None
         self.last_ipv4_address: Optional[str] = None
         self.last_ipv6_address: Optional[str] = None
         
-        # Settings from config (with optional overrides)
         self.ipv4_enabled = ipv4_enabled if ipv4_enabled is not None else config.network_ipv4_enabled
         self.ipv6_enabled = ipv6_enabled if ipv6_enabled is not None else config.network_ipv6_enabled
         self.ipv4_detection_url = config.network_ipv4_detection_url
         self.ipv6_detection_url = config.network_ipv6_detection_url
         self.timeout = config.network_timeout
         self.retry_attempts = config.network_retry_attempts
+
 
     ################################################################################
     # IP ADDRESS DETECTION - Public IP Retrieval
@@ -91,6 +94,7 @@ class NetworkData:
             
         return self.ipv4_address, self.ipv6_address
 
+
     def get_current_public_ipv4_address(self, retries: Optional[int] = None, timeout: Optional[int] = None) -> Optional[str]:
         """Get current public IPv4 address with retry logic.
 
@@ -107,7 +111,7 @@ class NetworkData:
         for attempt in range(retries):
             try:
                 response = requests.get(self.ipv4_detection_url, timeout=timeout)
-                if response.status_code == 200 and response.text:
+                if response.status_code == HTTPStatus.OK and response.text:
                     ipv4_address = response.text.strip()
                     self.logger.debug(f"IPv4 address detected: {ipv4_address}")
                     return ipv4_address
@@ -120,10 +124,11 @@ class NetworkData:
                 self.logger.warning(f"IPv4 detection error (attempt {attempt + 1}/{retries}): {e}")
                 
             if attempt < retries - 1:
-                time.sleep(2)
+                time.sleep(NetworkAPI.RETRY_DELAY)
                 
         self.logger.error("Failed to fetch IPv4 address after multiple attempts")
         return None
+
 
     def get_current_public_ipv6_address(self, retries: Optional[int] = None, timeout: Optional[int] = None) -> Optional[str]:
         """Get current public IPv6 address with retry logic.
@@ -141,7 +146,7 @@ class NetworkData:
         for attempt in range(retries):
             try:
                 response = requests.get(self.ipv6_detection_url, timeout=timeout)
-                if response.status_code == 200 and response.text:
+                if response.status_code == HTTPStatus.OK and response.text:
                     ipv6_address = response.text.strip()
                     self.logger.debug(f"IPv6 address detected: {ipv6_address}")
                     return ipv6_address
@@ -154,10 +159,11 @@ class NetworkData:
                 self.logger.warning(f"IPv6 detection error (attempt {attempt + 1}/{retries}): {e}")
                 
             if attempt < retries - 1:
-                time.sleep(2)
+                time.sleep(NetworkAPI.RETRY_DELAY)
                 
         self.logger.error("Failed to fetch IPv6 address after multiple attempts")
         return None
+
 
     ################################################################################
     # STATE MANAGEMENT - IP Change Detection
@@ -172,6 +178,7 @@ class NetworkData:
         self.last_ipv4_address = self.ipv4_address
         self.last_ipv6_address = self.ipv6_address
         
+
     def has_ip_changed(self) -> Dict[str, bool]:
         """Check if IP addresses have changed since last save.
 
@@ -183,6 +190,7 @@ class NetworkData:
             'ipv4_changed': self.ipv4_address != self.last_ipv4_address,
             'ipv6_changed': self.ipv6_address != self.last_ipv6_address
         }
+
 
     ################################################################################
     # STATUS & INFORMATION - Network Status Reporting

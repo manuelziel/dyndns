@@ -1,4 +1,4 @@
-# Requirements for IONOS-DYNDNS
+# Requirements for DynDNS
 # Python 3.11+ required for tomllib support
 
 ################################################################################

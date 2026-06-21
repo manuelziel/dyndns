@@ -5,7 +5,7 @@ This module provides thread-safe database operations using a connection pool.
 Supports multi-threaded applications with automatic connection management.
 
 Typical usage:
-    >>> db = Database('/var/lib/ionos-dyndns/ionos-dyndns.db')
+    >>> db = Database('/var/lib/dyndns/dyndns.db')
     >>> with db.get_connection() as conn:
     ...     cursor = conn.cursor()
     ...     cursor.execute('SELECT * FROM domains')
@@ -18,7 +18,7 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard library imports
+# Standard Imports
 import json
 import logging
 import os
@@ -28,10 +28,12 @@ import threading
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
 
-# Local imports
+# Local Imports
 from .encryption import EncryptionManager
-from .constants import SyncStatus, UpdateStatus
+from .constants import SyncStatus, UpdateStatus, DatabaseDefaults
 from .exceptions import DatabaseError, EncryptionError
+from .ownership import ensure_service_ownership
+
 
 ################################################################################
 # DATABASE CLASS - SQLite with Connection Pooling
@@ -50,7 +52,7 @@ class Database:
         config: Configuration object reference.
     """
 
-    def __init__(self, db_file: str, max_connections: int = 5, logger: Optional[Any] = None, config: Optional[Any] = None) -> None:
+    def __init__(self, db_file: str, max_connections: int = DatabaseDefaults.MAX_CONNECTIONS, logger: Optional[Any] = None, config: Optional[Any] = None) -> None:
         """Initialize database with connection pooling.
 
         Args:
@@ -79,18 +81,27 @@ class Database:
         self._encryption = EncryptionManager(self.config.encryption_key_path, self.logger)
         
         db_exists = os.path.exists(db_file)
-        
+
         self._initialize_pool()
-        
+
         if not db_exists:
             self.logger.info("Database does not exist. Creating a new one...")
             self.create_tables()
-            
+
+        # Hand off DB file ownership to the service user when running as
+        # root (admin CLI such as import/export). No-op otherwise. Also
+        # covers the WAL/SHM sidecar files if present.
+        ensure_service_ownership(db_file, logger=self.logger)
+        for sidecar in (f"{db_file}-wal", f"{db_file}-shm"):
+            ensure_service_ownership(sidecar, logger=self.logger)
+
         self.logger.info(f"Database initialized with connection pool (max: {max_connections})")
+
 
     def __del__(self) -> None:
         """Close all database connections when the object is destroyed."""
         self.close()
+
 
     ################################################################################
     # PUBLIC CONNECTION INTERFACE - Context Manager
@@ -112,19 +123,23 @@ class Database:
         conn = None
         try:
             try:
-                conn = self._pool.get(timeout=10.0)
+                conn = self._pool.get(timeout=DatabaseDefaults.POOL_GET_TIMEOUT)
             except queue.Empty:
                 raise DatabaseError("Connection pool exhausted - no connections available")
             
             try:
                 conn.execute("SELECT 1")
             except sqlite3.Error:
-                conn.close()
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = None
                 conn = self._create_connection()
                 
             yield conn
             
-        except Exception as e:
+        except BaseException:
             if conn:
                 try:
                     conn.rollback()
@@ -135,9 +150,10 @@ class Database:
         finally:
             if conn:
                 try:
-                    self._pool.put(conn, timeout=1.0)
+                    self._pool.put(conn, timeout=DatabaseDefaults.POOL_PUT_TIMEOUT)
                 except queue.Full:
                     conn.close()
+
 
     ################################################################################
     # QUERY EXECUTION METHODS - Public Database Operations
@@ -154,12 +170,20 @@ class Database:
 
         Returns:
             List of sqlite3.Row objects containing query results.
+
+        Raises:
+            DatabaseError: If database query execution fails.
         """
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, params or ())
-            return cursor.fetchall()
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, params or ())
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            self.logger.error(f"Database query failed: {e} | Query: {query} | Params: {params}")
+            raise DatabaseError(f"Database query failed: {e}") from e
     
+
     def execute_update(self, query: str, params: Optional[tuple] = None) -> int:
         """Execute an INSERT, UPDATE, or DELETE query.
 
@@ -171,13 +195,21 @@ class Database:
 
         Returns:
             Number of rows affected by the operation.
+
+        Raises:
+            DatabaseError: If database update execution fails.
         """
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, params or ())
-            conn.commit()
-            return cursor.rowcount
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, params or ())
+                conn.commit()
+                return cursor.rowcount
+        except sqlite3.Error as e:
+            self.logger.error(f"Database update failed: {e} | Query: {query} | Params: {params}")
+            raise DatabaseError(f"Database update failed: {e}") from e
     
+
     def execute_many(self, query: str, params_list: List[tuple]) -> int:
         """Execute a query with multiple parameter sets.
 
@@ -189,12 +221,20 @@ class Database:
 
         Returns:
             Total number of rows affected by all operations.
+
+        Raises:
+            DatabaseError: If database batch update execution fails.
         """
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.executemany(query, params_list)
-            conn.commit()
-            return cursor.rowcount            
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.executemany(query, params_list)
+                conn.commit()
+                return cursor.rowcount            
+        except sqlite3.Error as e:
+            self.logger.error(f"Database batch update failed: {e} | Query: {query}")
+            raise DatabaseError(f"Database batch update failed: {e}") from e
+
 
     ################################################################################
     # RESOURCE MANAGEMENT - Cleanup Methods
@@ -219,6 +259,7 @@ class Database:
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Error during database cleanup: {e}")
+
 
     ################################################################################
     # TABLE MANAGEMENT - Schema Creation and Management
@@ -328,6 +369,7 @@ class Database:
             ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
         ])
 
+
     def create_table(self, table_name: str, columns: List[tuple]) -> None:
         """Create a table if it does not exist.
 
@@ -341,6 +383,7 @@ class Database:
         sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({columns_sql});"
         
         self.execute_update(sql)
+
 
     ################################################################################
     # APPLICATION-SPECIFIC METHODS - Configuration Management
@@ -361,6 +404,7 @@ class Database:
         rows = self.execute_query("SELECT value FROM app_config WHERE key = ?", (key,))
         return rows[0]["value"] if rows else default
 
+
     def set_config_by_key(self, key: str, value: str) -> None:
         """Set or update configuration value by key.
 
@@ -376,6 +420,7 @@ class Database:
         if affected == 0:
             self.execute_update("INSERT INTO app_config (key, value) VALUES (?, ?)", (key, value))
 
+
     def delete_config_by_key(self, key: str) -> bool:
         """Delete configuration entry by key.
 
@@ -389,6 +434,7 @@ class Database:
         """
         affected = self.execute_update("DELETE FROM app_config WHERE key = ?", (key,))
         return affected > 0
+
 
     ################################################################################
     # APPLICATION-SPECIFIC METHODS - DynDNS Operations
@@ -410,6 +456,7 @@ class Database:
         rows = self.execute_query("SELECT * FROM zones WHERE id = ?", (zone_id,))
         return rows[0] if rows else None
     
+
     def get_zone_by_name(self, zone_name: str) -> Optional[Dict[str, Any]]:
         """Get zone by domain name.
 
@@ -422,14 +469,25 @@ class Database:
         rows = self.execute_query("SELECT * FROM zones WHERE zone_name = ?", (zone_name,))
         return rows[0] if rows else None
     
+
     def get_all_zones(self) -> List[Dict[str, Any]]:
-        """Get all zones ordered by name."""
+        """Get all zones ordered by name.
+
+        Returns:
+            List of all zone dictionaries.
+        """
         return self.execute_query("SELECT * FROM zones ORDER BY zone_name")
     
+
     def get_all_enabled_zones(self) -> List[Dict[str, Any]]:
-        """Get all enabled zones ordered by name."""
+        """Get all enabled zones ordered by name.
+
+        Returns:
+            List of all enabled zone dictionaries.
+        """
         return self.execute_query("SELECT * FROM zones WHERE enabled = 1 ORDER BY zone_name")
     
+
     def add_zone(self, zone_name: str, provider_zone_id: str, enabled: bool = True) -> Optional[int]:
         """Add a new DNS zone.
 
@@ -449,6 +507,7 @@ class Database:
         rows = self.execute_query("SELECT id FROM zones WHERE zone_name = ?", (zone_name,))
         return rows[0]["id"] if rows else None
     
+
     def update_zone_status(self, zone_id: int, enabled: bool) -> int:
         """Enable or disable a DNS zone.
 
@@ -463,6 +522,7 @@ class Database:
                  WHERE id = ?"""
         return self.execute_update(sql, (1 if enabled else 0, zone_id))
     
+
     def update_zone(self, zone_id: int, **kwargs: Any) -> int:
         """Update zone fields.
 
@@ -490,6 +550,7 @@ class Database:
         values = list(updates.values()) + [zone_id]
         return self.execute_update(sql, tuple(values))
     
+
     def delete_zone(self, zone_id: int) -> int:
         """Delete a zone and all related data.
 
@@ -505,6 +566,7 @@ class Database:
         sql = "DELETE FROM zones WHERE id = ?"
         return self.execute_update(sql, (zone_id,))
     
+
     # ===================================================================
     # RECORD MANAGEMENT - DNS Records (Root + Subdomains)
     # ===================================================================
@@ -521,6 +583,7 @@ class Database:
         rows = self.execute_query("SELECT * FROM records WHERE id = ?", (record_id,))
         return rows[0] if rows else None
     
+
     def get_records_by_zone(self, zone_id: int, enabled_only: bool = True) -> List[Dict[str, Any]]:
         """Get all DNS records for a zone.
 
@@ -537,6 +600,7 @@ class Database:
             sql = "SELECT * FROM records WHERE zone_id = ? ORDER BY record_name, record_type"
         return self.execute_query(sql, (zone_id,))
     
+
     def get_record_by_name_and_type(self, zone_id: int, record_name: str, record_type: str) -> Optional[Dict[str, Any]]:
         """Get a specific record by FQDN and type.
 
@@ -552,6 +616,7 @@ class Database:
         rows = self.execute_query(sql, (zone_id, record_name, record_type))
         return rows[0] if rows else None
     
+
     def add_record(self, zone_id: int, record_name: str, record_type: str, provider_record_id: Optional[str] = None, 
                    ttl: Optional[int] = None, enabled: bool = True, managed: bool = True, sync_status: str = SyncStatus.SYNCED) -> Optional[int]:
         """Add a new DNS record with sync tracking.
@@ -585,6 +650,7 @@ class Database:
         )
         return rows[0]["id"] if rows else None
     
+
     def update_record_provider_id(self, record_id: int, provider_record_id: str) -> int:
         """Update Provider Record ID.
 
@@ -598,6 +664,7 @@ class Database:
         sql = "UPDATE records SET provider_record_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         return self.execute_update(sql, (provider_record_id, record_id))
     
+
     def update_record_status(self, record_id: int, enabled: bool) -> int:
         """Enable or disable a DNS record.
 
@@ -611,6 +678,7 @@ class Database:
         sql = "UPDATE records SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         return self.execute_update(sql, (1 if enabled else 0, record_id))
     
+
     def update_record(self, record_id: int, **kwargs: Any) -> int:
         """Update DNS record fields including sync tracking.
 
@@ -643,6 +711,7 @@ class Database:
         values = list(updates.values()) + [record_id]
         return self.execute_update(sql, tuple(values))
     
+
     def delete_record(self, record_id: int) -> int:
         """Delete a DNS record and all related data.
 
@@ -657,6 +726,7 @@ class Database:
         sql = "DELETE FROM records WHERE id = ?"
         return self.execute_update(sql, (record_id,))
     
+
     def get_orphaned_records(self, zone_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get all orphaned records.
 
@@ -674,6 +744,7 @@ class Database:
             rows = self.execute_query(sql)
         return [dict(row) for row in rows]
     
+
     def update_sync_status(self, record_id: int, sync_status: str, last_synced_at: Optional[str] = None) -> int:
         """Update sync status and optionally last_synced_at timestamp.
 
@@ -692,6 +763,7 @@ class Database:
             sql = "UPDATE records SET sync_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
             return self.execute_update(sql, (sync_status, record_id))
     
+
     # ===================================================================
     # IP ADDRESS MANAGEMENT - Current state per record
     # ===================================================================
@@ -711,6 +783,7 @@ class Database:
         )
         return rows[0] if rows else None
     
+
     def update_ip_address(self, record_id: int, ip_address: str, changed: bool = False) -> None:
         """Update or insert IP address for a record.
 
@@ -741,6 +814,7 @@ class Database:
                      VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"""
             self.execute_update(sql, (record_id, ip_address))
     
+
     # ===================================================================
     # DNS UPDATE HISTORY - Audit trail per record
     # ===================================================================
@@ -759,6 +833,7 @@ class Database:
                  VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"""
         self.execute_update(sql, (record_id, old_ip, new_ip, status, error_message))
     
+
     def get_dns_update_history(self, record_id: Optional[int] = None, zone_id: Optional[int] = None, limit: int = 100) -> List[Dict[str, Any]]:
         """Get DNS update history.
 
@@ -786,6 +861,7 @@ class Database:
                      ORDER BY updated_at DESC LIMIT ?"""
             return self.execute_query(sql, (limit,))
     
+
     # ===================================================================
     # DYNDNS CONFIG - DynDNS Bulk Configuration
     # ===================================================================
@@ -807,11 +883,12 @@ class Database:
         if config.get('api_key'):
             try:
                 config['api_key'] = self._encryption.decrypt(config['api_key'])
-            except Exception as e:
+            except EncryptionError as e:
                 self.logger.error(f"Failed to decrypt api_key for zone_id={zone_id}: {e}")
                 return None
         return config
     
+
     def get_dyndns_config_by_bulk_id(self, bulk_id: str) -> Optional[Dict[str, Any]]:
         """Get DynDNS configuration by bulkId.
 
@@ -829,11 +906,12 @@ class Database:
         if config.get('api_key'):
             try:
                 config['api_key'] = self._encryption.decrypt(config['api_key'])
-            except Exception as e:
+            except EncryptionError as e:
                 self.logger.error(f"Failed to decrypt api_key for bulk_id={bulk_id}: {e}")
                 return None
         return config
     
+
     def set_dyndns_config(self, zone_id: int, bulk_id: str, api_key: str, update_url: Optional[str] = None, 
                           description: Optional[str] = None, domains: Optional[List[str]] = None) -> None:
         """Set or update DynDNS configuration for a zone.
@@ -854,7 +932,7 @@ class Database:
         """
         try:
             api_key_encrypted = self._encryption.encrypt(api_key)
-        except Exception as e:
+        except EncryptionError as e:
             self.logger.error(f"Failed to encrypt api_key for zone_id={zone_id}: {e}")
             raise EncryptionError(f"API key encryption failed: {e}")
         
@@ -882,6 +960,7 @@ class Database:
             self.execute_update(sql, (zone_id, bulk_id, api_key_encrypted, update_url, 
                                       description, domains_json))
     
+
     def update_dyndns_status(self, zone_id: int, enabled: bool) -> int:
         """Enable or disable DynDNS for a zone.
 
@@ -895,6 +974,7 @@ class Database:
         sql = """UPDATE dyndns_config SET enabled = ?, updated_at = CURRENT_TIMESTAMP 
                  WHERE zone_id = ?"""
         return self.execute_update(sql, (1 if enabled else 0, zone_id))
+
 
     ################################################################################
     # PRIVATE METHODS - Internal Implementation
@@ -914,7 +994,7 @@ class Database:
                 conn = self._create_connection()
                 self._pool.put(conn)
                 self._created_connections += 1
-        except Exception as e:
+        except DatabaseError as e:
             while not self._pool.empty():
                 try:
                     conn = self._pool.get_nowait()
@@ -925,6 +1005,7 @@ class Database:
                     pass
             raise DatabaseError(f"Failed to initialize connection pool: {e}")
     
+
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new database connection with proper settings.
 
@@ -940,7 +1021,7 @@ class Database:
             conn = sqlite3.connect(
                 self.db_file, 
                 check_same_thread=False,
-                timeout=30.0  # 30 second timeout
+                timeout=DatabaseDefaults.CONNECT_TIMEOUT
             )
             conn.row_factory = sqlite3.Row
             
@@ -954,7 +1035,7 @@ class Database:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA temp_store=memory")
-            conn.execute("PRAGMA mmap_size=268435456")  # 256MB
+            conn.execute(f"PRAGMA mmap_size={DatabaseDefaults.MMAP_SIZE}")
             
             return conn
             

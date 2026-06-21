@@ -6,8 +6,12 @@ db.db-wal
 *.db-shm
 *.db-wal
 
-# Encryption key (NEVER commit!)
+# Encryption key
 .encryption_key
+
+# Environment Variables
+.env
+.env.*
 
 # Python cache
 __pycache__/
@@ -21,11 +25,18 @@ env/
 ENV/
 
 # IDE
+.agents/
 .vscode/
 .idea/
 *.swp
 *.swo
+.*.swp
 *~
+
+# Github
+.git/
+.github/
+.gitignore
 
 # OS files
 .DS_Store
@@ -34,10 +45,9 @@ Thumbs.db
 # Logs
 *.log
 
-# Help Folder
-_help/
+# Project Resources
+_project-resources/
 
 # Temporary files
 *.tmp
 *.temp
-.*.swp

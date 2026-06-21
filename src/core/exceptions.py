@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Custom exception classes for IONOS DynDNS.
+"""Custom exception classes for DynDNS.
 
 Provides a structured exception hierarchy for consistent error handling
 across the application. All custom exceptions inherit from DynDNSException.
@@ -31,7 +31,7 @@ License: MIT
 ################################################################################
 
 class DynDNSException(Exception):
-    """Base exception for all IONOS DynDNS errors."""
+    """Base exception for all DynDNS errors."""
     pass
 
 ################################################################################

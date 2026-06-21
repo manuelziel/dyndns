@@ -1,6 +1,7 @@
 #!/bin/bash
 #
-# IONOS-DYNDNS
+# DynDNS Setup Script
+# Installation and management for DynDNS Dynamic DNS Client for IONOS
 #
 # Author: Manuel Ziel
 # License: MIT
@@ -12,7 +13,14 @@ set -euo pipefail
 
 readonly _DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load core libraries (shared between setup.sh and start.sh)
+# Load modular components
+# Architecture:
+# - lib/core/     - Shared libraries (setup.sh + dyndns.sh)
+# - lib/setup/    - Setup-only libraries
+# - lib/runtime/  - Runtime-only libraries (dyndns.sh)
+# - lib/modules/  - Optional shared modules
+
+# Load core libraries (shared between setup.sh and dyndns.sh)
 source "${_DIR}/lib/core/colors.sh"
 source "${_DIR}/lib/core/logging.sh"
 source "${_DIR}/lib/core/config.sh"
@@ -112,9 +120,9 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-            help|--help|-h)
+            version|--version|-v)
                 if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="help"
+                    ACTION="version"
                     shift
                 else
                     print_error "Multiple actions specified: $ACTION and $1"
@@ -122,9 +130,9 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-            version|--version|-v)
+             help|--help|-h)
                 if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="version"
+                    ACTION="help"
                     shift
                 else
                     print_error "Multiple actions specified: $ACTION and $1"
@@ -156,6 +164,9 @@ parse_arguments() {
                 ;;
             --purge)
                 PURGE_MODE=1
+                if [[ -z "${ACTION:-}" ]]; then
+                    ACTION="purge"
+                fi
                 shift
                 ;;
                 
@@ -209,7 +220,7 @@ main() {
             do_reinstall
             ;;
         uninstall)
-            if [[ "${PURGE_MODE:-0}" -eq 1 ]]; then
+            if [[ "${PURGE_MODE}" -eq 1 ]]; then
                 do_purge
             else
                 do_uninstall
@@ -221,11 +232,11 @@ main() {
         status)
             show_status
             ;;
-        help)
-            show_help
-            ;;
         version)
             show_version
+            ;;
+        help)
+            show_help
             ;;
         interactive)
             show_interactive_menu
@@ -236,6 +247,8 @@ main() {
             cleanup_and_exit 1
             ;;
     esac
+    
+    successful_exit 0
 }
 
 main "$@"

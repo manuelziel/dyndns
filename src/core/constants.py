@@ -18,7 +18,31 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
+# Local Imports
 from .exceptions import ValidationError
+
+################################################################################
+# APPLICATION SETTINGS
+################################################################################
+
+class AppSettings:
+    """Global application metadata and settings.
+
+    Attributes:
+        VERSION: Current software version.
+        AUTHOR: Author's name.
+        EMAIL: Author's email.
+        DESCRIPTION: Brief description of the software.
+        SOFTWARE_NAME: Name of the application.
+        SYSLOG_IDENTIFIER: Systemd syslog identifier.
+    """
+    VERSION = "1.0.3-alpha05"
+    AUTHOR = "Manuel Ziel"
+    EMAIL = "manuelziel@gmail.com"
+    DESCRIPTION = "Dynamic DNS Client"
+    SOFTWARE_NAME = "DynDNS"
+    SYSLOG_IDENTIFIER = "dyndns"
+
 
 ################################################################################
 # SYNC STATUS - Record synchronization states
@@ -143,6 +167,97 @@ class PlaceholderIP:
             raise ValidationError(f"Unsupported record type: {record_type}")
 
 
+
+
+################################################################################
+# HTTP METHODS - Standard HTTP Verbs
+################################################################################
+
+class HTTPMethod:
+    """Namespace for standard HTTP methods."""
+    GET = "GET"
+    POST = "POST"
+    PUT = "PUT"
+    DELETE = "DELETE"
+
+
+################################################################################
+# HTTP STATUS CODES - Standard HTTP Response Codes
+################################################################################
+
+class HTTPStatus:
+    """Namespace for HTTP response status codes.
+
+    Attributes:
+        OK: Request succeeded (200).
+        CREATED: Request succeeded and resource created (201).
+        UNAUTHORIZED: Authentication failed (401).
+        NOT_FOUND: Resource not found (404).
+        TOO_MANY_REQUESTS: Rate limit exceeded (429).
+    """
+    OK = 200
+    CREATED = 201
+    UNAUTHORIZED = 401
+    NOT_FOUND = 404
+    TOO_MANY_REQUESTS = 429
+
+
+################################################################################
+# HTTP HEADERS - Standard HTTP Header Names and Values
+################################################################################
+
+class HTTPHeader:
+    """Namespace for standard HTTP headers."""
+    ACCEPT = "accept"
+    CONTENT_TYPE = "Content-Type"
+    X_API_KEY = "X-API-Key"
+
+
+class HTTPHeaderValue:
+    """Namespace for standard HTTP header values."""
+    APPLICATION_JSON = "application/json"
+
+
+################################################################################
+# ENVIRONMENT VARIABLES - System Environment Keys
+################################################################################
+
+class EnvKeys:
+    """Namespace for environment variable keys."""
+    SERVICE_USER = "SERVICE_USER"
+    SERVICE_GROUP = "SERVICE_GROUP"
+
+
+################################################################################
+# SYSTEM DEFAULTS - User Account and Permission Defaults
+################################################################################
+
+class SystemDefaults:
+    """Namespace for system defaults and permission masks.
+
+    Attributes:
+        ROOT_USER: root username.
+        FILE_MODE_GROUP_WRITE: Read/write for user and group (0o660).
+        DIR_MODE_GROUP_WRITE: Read/write/execute for user and group (0o770).
+        KEY_FILE_MODE: Read/write only for owner (0o600).
+        KEY_DIR_MODE: Read/write/execute only for owner (0o700).
+    """
+    ROOT_USER = "root"
+    FILE_MODE_GROUP_WRITE = 0o660
+    DIR_MODE_GROUP_WRITE = 0o770
+    KEY_FILE_MODE = 0o600
+    KEY_DIR_MODE = 0o700
+
+
+################################################################################
+# ENCRYPTION SETTINGS - Encryption Specifications
+################################################################################
+
+class EncryptionDefaults:
+    """Namespace for encryption defaults."""
+    KEY_LENGTH = 44
+
+
 ################################################################################
 # EXPORT FORMAT - Configuration export/import formats
 ################################################################################
@@ -192,3 +307,92 @@ class ExportFormat:
             True if valid (YAML or JSON), False otherwise.
         """
         return format_type in (cls.YAML, cls.JSON)
+
+
+################################################################################
+# DATABASE DEFAULTS - SQLite Connection Pool Config
+################################################################################
+
+class DatabaseDefaults:
+    """Default values for SQLite database configuration.
+
+    Attributes:
+        MAX_CONNECTIONS: Maximum connections in the pool.
+        CONNECT_TIMEOUT: SQLite connect timeout in seconds.
+        POOL_GET_TIMEOUT: Timeout to acquire a connection from pool.
+        POOL_PUT_TIMEOUT: Timeout to return a connection to pool.
+        MMAP_SIZE: Memory-mapped I/O size in bytes (256 MB).
+        DB_TIMESTAMP_FORMAT: Timestamp format used for database entries.
+    """
+    MAX_CONNECTIONS = 5
+    CONNECT_TIMEOUT = 30.0
+    POOL_GET_TIMEOUT = 10.0
+    POOL_PUT_TIMEOUT = 1.0
+    MMAP_SIZE = 268435456
+    DB_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+################################################################################
+# DNS SETTINGS - Default DNS Configuration
+################################################################################
+
+class DNSDefaults:
+    """Namespace for default DNS settings."""
+    DEFAULT_TTL = 3600  # seconds
+
+
+################################################################################
+# DAEMON SETTINGS - Default Daemon Configuration
+################################################################################
+
+class DaemonDefaults:
+    """Namespace for default daemon settings."""
+    ENABLED = False
+    CHECK_INTERVAL = 300  # seconds
+    MAX_RETRIES = 3
+    RETRY_DELAY = 60  # seconds
+    FORCE_UPDATE_INTERVAL = 86400  # seconds
+    SYNC_CHECKS = True
+    STOP_TIMEOUT = 30  # seconds
+    STOP_CHECK_INTERVAL = 1  # seconds
+
+
+################################################################################
+# APPLICATION PATHS - Default File & Directory Paths
+################################################################################
+
+class AppPaths:
+    """Namespace for default application paths and filenames."""
+    DATA_DIR = "/var/lib/dyndns/"
+    DB_FILE = "dyndns.db"
+    CONFIG_FILE = "config.toml"
+    ENCRYPTION_KEY_FILE = ".encryption_key"
+
+
+################################################################################
+# API SETTINGS - Default Provider API Configuration
+################################################################################
+
+class ProviderAPI:
+    """Namespace for DNS Provider API defaults."""
+    BASE_URL = "https://api.hosting.ionos.com/dns/v1"
+    TIMEOUT = 30  # seconds
+    RETRY_ATTEMPTS = 3
+    AUTH_MAX_RETRIES = 2
+    AUTH_RETRY_DELAY = 2  # seconds
+
+    # Error codes
+    ERR_RECORD_NOT_FOUND = "RECORD_NOT_FOUND"
+
+
+################################################################################
+# NETWORK SETTINGS - Default Network & IP Detection Configuration
+################################################################################
+
+class NetworkAPI:
+    """Namespace for IP detection service defaults."""
+    IPV4_URL = "https://api.ipify.org"
+    IPV6_URL = "https://api6.ipify.org"
+    TIMEOUT = 10  # seconds
+    RETRY_ATTEMPTS = 3
+    RETRY_DELAY = 2  # seconds

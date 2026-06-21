@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""IONOS DynDNS - Dynamic DNS Client for IONOS Provider API.
+"""DynDNS - Dynamic DNS Client for IONOS Provider API.
 
-This package provides all components for the IONOS DynDNS daemon application
+This package provides all components for the DynDNS daemon application
 with systemd integration, database support, and modular architecture.
 
 Modules:
@@ -16,7 +16,7 @@ Modules:
 Typical usage:
     >>> from src import ConfigManager, LoggerManager, Application
     >>> config = ConfigManager('/app', '/app/config.toml')
-    >>> logger = LoggerManager.get_logger('ionos-dyndns')
+    >>> logger = LoggerManager.get_logger('dyndns')
     >>> app = Application(config, logger)
 
 Author: Manuel Ziel
@@ -24,21 +24,12 @@ License: MIT
 """
 
 ################################################################################
-# PACKAGE METADATA
-################################################################################
-
-__version__ = "1.0.3alpha04"
-__author__ = "Manuel Ziel"
-__email__ = "manuelziel@gmail.com"
-__description__ = "Dynamic DNS Client"
-__software_name__ = "IONOS-DYNDNS"
-__syslog_identifier__ = "ionos-dyndns"  # Used for systemd journal logging
-
-################################################################################
 # PACKAGE IMPORTS
 ################################################################################
 
-# Core module imports
+# Local Imports
+from .core.constants import AppSettings
+
 from .core import (
     ConfigManager,
     Database,
@@ -55,14 +46,20 @@ from .core import (
     ValidationError,
 )
 
-# Utils module imports
 from .utils import Colors, LOG_COLORS, LOG_SYMBOLS
-
-# Application imports
-from .application import Application
-from .daemon import DaemonManager
 from .network import NetworkData
 from .api import HTTPClient
+from .daemon import DaemonManager
+from .application import Application
+
+# Package metadata
+__version__ = AppSettings.VERSION
+__author__ = AppSettings.AUTHOR
+__email__ = AppSettings.EMAIL
+__description__ = AppSettings.DESCRIPTION
+__software_name__ = AppSettings.SOFTWARE_NAME
+__syslog_identifier__ = AppSettings.SYSLOG_IDENTIFIER
+
 
 ################################################################################
 # PUBLIC API

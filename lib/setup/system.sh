@@ -1,9 +1,11 @@
 #!/bin/bash
 # lib/setup/system.sh - System utilities and checks
 #
-# IONOS-DYNDNS
+# [SOFTWARE_NAME] Setup Script
+# Setup script for [SOFTWARE_DESCRIPTION]
 #
-# Author: Manuel Ziel
+# Created: [CREATION_DATE]
+# Author: [AUTHOR]
 # License: MIT
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,11 +17,13 @@
 check_internet() {
     print_info "Checking internet connection..."
     
+    # Try ping first (faster)
     if ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1; then
         print_success "Internet connection available"
         return 0
     fi
     
+    # Fallback to curl if available
     if command -v curl &>/dev/null; then
         if curl -s --connect-timeout 5 --head https://www.google.com >/dev/null 2>&1; then
             print_success "Internet connection available"
@@ -27,6 +31,7 @@ check_internet() {
         fi
     fi
     
+    # Fallback to wget if available
     if command -v wget &>/dev/null; then
         if wget -q --spider --timeout=5 https://www.google.com >/dev/null 2>&1; then
             print_success "Internet connection available"
@@ -54,6 +59,7 @@ check_and_install_dependencies() {
     local missing_packages=()
     local missing_pkg_keys=()
     
+    # Check all dependencies (package-based check)
     for pkg_key in "${dependencies[@]}"; do
         pkg_name=$(get_package_name_for_key "${pkg_key}")
         

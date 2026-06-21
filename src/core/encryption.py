@@ -8,7 +8,7 @@ The encryption key is auto-generated if not exists and stored with
 secure permissions (0o600). Key rotation is not yet implemented.
 
 Typical usage:
-    >>> enc = EncryptionManager('/var/lib/ionos-dyndns/.encryption_key')
+    >>> enc = EncryptionManager('/var/lib/dyndns/.encryption_key')
     >>> encrypted = enc.encrypt('api-secret-key')
     >>> decrypted = enc.decrypt(encrypted)
 
@@ -20,12 +20,18 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
+# Standard Imports
 import os
 from typing import Optional, Any
+
+# Third-Party Imports
 from cryptography.fernet import Fernet
 
-# Local imports
+# Local Imports
 from .exceptions import EncryptionError, ValidationError
+from .ownership import ensure_service_ownership
+from .constants import SystemDefaults, EncryptionDefaults
+
 
 ################################################################################
 # ENCRYPTION MANAGER CLASS
@@ -151,31 +157,39 @@ class EncryptionManager:
             if os.path.exists(self.key_file):
                 with open(self.key_file, 'rb') as f:
                     self._encryption_key = f.read()
-                
+
                 current_perms = os.stat(self.key_file).st_mode & 0o777
-                if current_perms != 0o600:
-                    os.chmod(self.key_file, 0o600)
+                if current_perms != SystemDefaults.KEY_FILE_MODE:
+                    os.chmod(self.key_file, SystemDefaults.KEY_FILE_MODE)
                     if self.logger:
                         self.logger.warning(f"Fixed encryption key permissions: {self.key_file}")
+
+                # Hand off ownership to the service user when running as
+                # root (admin CLI). No-op otherwise. Key file stays with correct mode.
+                ensure_service_ownership(self.key_file, mode=SystemDefaults.KEY_FILE_MODE, logger=self.logger)
             else:
                 self._encryption_key = Fernet.generate_key()
-                
+
                 key_dir = os.path.dirname(self.key_file)
                 if key_dir and not os.path.exists(key_dir):
-                    os.makedirs(key_dir, mode=0o700, exist_ok=True)
-                
+                    os.makedirs(key_dir, mode=SystemDefaults.KEY_DIR_MODE, exist_ok=True)
+
                 with open(self.key_file, 'wb') as f:
                     f.write(self._encryption_key)
-                
-                os.chmod(self.key_file, 0o600)
-                
+
+                os.chmod(self.key_file, SystemDefaults.KEY_FILE_MODE)
+
+                # New key file: hand off ownership to service user when
+                # running as root so the daemon can read it at runtime.
+                ensure_service_ownership(self.key_file, mode=SystemDefaults.KEY_FILE_MODE, logger=self.logger)
+
                 if self.logger:
                     self.logger.info(f"Generated new encryption key: {self.key_file}")
             
             # Fernet keys are always 32 bytes URL-safe base64 (44 chars)
-            if len(self._encryption_key) != 44:
+            if len(self._encryption_key) != EncryptionDefaults.KEY_LENGTH:
                 raise ValidationError(
-                    f"Invalid encryption key length: {len(self._encryption_key)} (expected 44)"
+                    f"Invalid encryption key length: {len(self._encryption_key)} (expected {EncryptionDefaults.KEY_LENGTH})"
                 )
             
             self._cipher = Fernet(self._encryption_key)

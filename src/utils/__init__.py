@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Utility module for IONOS DynDNS.
+"""Utility module for DynDNS.
 
 This module provides utility functions and constants used across the application,
 including ANSI color codes for terminal output and logging symbols.
@@ -19,6 +19,7 @@ License: MIT
 # PACKAGE IMPORTS
 ################################################################################
 
+# Local Imports
 from .colors import Colors, LOG_COLORS, LOG_SYMBOLS
 
 ################################################################################

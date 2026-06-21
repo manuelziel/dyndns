@@ -19,11 +19,15 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard library imports
+# Standard Imports
 import signal
 import threading
 import time
+import sys
 from typing import Optional, Dict, Any
+
+# Local Imports
+from src.core.constants import DaemonDefaults
 
 ################################################################################
 # DAEMON MANAGER CLASS - Background Process Management
@@ -61,6 +65,7 @@ class DaemonManager:
         self._setup_signal_handlers()
         self.logger.debug("Daemon manager initialized")
 
+
     ################################################################################
     # PUBLIC INTERFACE - Daemon Lifecycle Management
     ################################################################################
@@ -96,6 +101,7 @@ class DaemonManager:
             self.running = False
             return False
 
+
     def stop(self) -> bool:
         """Stop the daemon gracefully.
 
@@ -116,7 +122,7 @@ class DaemonManager:
             
             if self._daemon_thread and self._daemon_thread.is_alive():
                 self.logger.debug("Waiting for daemon thread to finish...")
-                self._daemon_thread.join(timeout=30)  # 30 second timeout
+                self._daemon_thread.join(timeout=DaemonDefaults.STOP_TIMEOUT)
                 
                 if self._daemon_thread.is_alive():
                     self.logger.warning("Daemon thread did not stop within timeout")
@@ -134,6 +140,7 @@ class DaemonManager:
         except Exception as e:
             self.logger.error(f"Error stopping daemon: {e}")
             return False
+
 
     def run_forever(self) -> None:
         """Run daemon in foreground mode as a blocking call.
@@ -160,6 +167,7 @@ class DaemonManager:
         finally:
             self.running = False
 
+
     ################################################################################
     # PUBLIC INTERFACE - Status and Information
     ################################################################################
@@ -172,6 +180,7 @@ class DaemonManager:
             False otherwise.
         """
         return self.running and not self._stop_event.is_set()
+
 
     def get_status(self) -> Dict[str, Any]:
         """Get current daemon status information.
@@ -188,6 +197,7 @@ class DaemonManager:
             'application_running': self.application.is_running() if hasattr(self.application, 'is_running') else None
         }
 
+
     ################################################################################
     # PRIVATE METHODS - Internal Implementation
     ################################################################################
@@ -199,6 +209,12 @@ class DaemonManager:
         SIGHUP (configuration reload).
         """
         def signal_handler(signum: int, frame: Any) -> None:
+            """Handle termination signals (SIGINT, SIGTERM) by initiating shutdown.
+
+            Args:
+                signum: The signal number received.
+                frame: The current stack frame.
+            """
             self.logger.info(f"Received signal {signum}, initiating shutdown...")
             self.stop()
         
@@ -206,6 +222,12 @@ class DaemonManager:
         signal.signal(signal.SIGINT, signal_handler)
         
         def reload_handler(signum: int, frame: Any) -> None:
+            """Handle SIGHUP by reloading the application configuration.
+
+            Args:
+                signum: The signal number received.
+                frame: The current stack frame.
+            """
             self.logger.info("Received SIGHUP, reloading configuration...")
             try:
                 if hasattr(self.application, 'reload_config'):
@@ -216,6 +238,7 @@ class DaemonManager:
                 self.logger.error(f"Failed to reload configuration: {e}")
                 
         signal.signal(signal.SIGHUP, reload_handler)
+
 
     def _daemon_loop(self) -> None:
         """Main daemon loop that executes application cycles at intervals.

@@ -1,48 +1,48 @@
 #!/usr/bin/env python3
-"""IONOS DynDNS - Main entry point for Dynamic DNS Client.
+"""DynDNS - Main entry point for Dynamic DNS Client.
 
-This is the main entry point for the IONOS DynDNS application. It handles
+This is the main entry point for the DynDNS application. It handles
 argument parsing, configuration loading, and dispatches to appropriate
 command handlers or starts the daemon.
 
 Typical usage:
-    $ ./ionos-dyndns.py                    # Single update run
-    $ ./ionos-dyndns.py config             # Open configuration menu
-    $ ./ionos-dyndns.py import config.yaml # Import configuration
-    $ ./ionos-dyndns.py export --format json
+    $ ./dyndns.py                    # Single update run
+    $ ./dyndns.py config             # Open configuration menu
+    $ ./dyndns.py import config.yaml # Import configuration
+    $ ./dyndns.py export --format json
 
 Note:
-    Use bash wrapper (ionos-dyndns) for daemon mode:
-    $ ionos-dyndns start --daemon
+    Use bash wrapper (dyndns) for daemon mode:
+    $ dyndns start --daemon
 
 Author: Manuel Ziel
 License: MIT
 """
 
 ################################################################################
-# IMPORTS & DEPENDENCIES
+# IMPORTS
 ################################################################################
 
-# Standard library imports
+# Standard Imports
 import sys
 import os
 import argparse
 import logging
 import signal
-from typing import Optional
+from typing import Optional, Any
 
-# Add src directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
 
-# Local imports from src
+# Local Imports
 from src import __version__, __author__, __software_name__
-from src.core import ConfigManager, LoggerManager
-from src.application import Application
+from src.core import ConfigManager, LoggerManager, AppPaths, ExportFormat
 from src.daemon import DaemonManager
+from src.application import Application
 from src.cli import ConfigMenu, ConfigImporter, ConfigExporter
+from src.cli.constants import CLICommands
 
 ################################################################################
-# ARGUMENT PARSING - Command-Line Interface
+# ARGUMENT PARSING
 ################################################################################
 
 def parse_arguments() -> argparse.Namespace:
@@ -67,8 +67,8 @@ Examples:
   %(prog)s import config.yaml       # Import configuration
   %(prog)s export --output backup.yaml  # Export configuration
 
-Note: Use bash wrapper (ionos-dyndns) for daemon mode:
-  ionos-dyndns start --daemon       # Continuous monitoring via systemd
+Note: Use bash wrapper (dyndns) for daemon mode:
+  dyndns start --daemon       # Continuous monitoring via systemd
         """
     )
     
@@ -84,12 +84,13 @@ Note: Use bash wrapper (ionos-dyndns) for daemon mode:
     
     parser_export = subparsers.add_parser('export', help='Export current configuration to file')
     parser_export.add_argument('--output', type=str, default=None, help='Output file path (default: stdout)')
-    parser_export.add_argument('--format', type=str, choices=['yaml', 'json'], default='yaml', help='Output format: yaml or json (default: yaml)')
+    parser_export.add_argument('--format', type=str, choices=[ExportFormat.YAML, ExportFormat.JSON], default=ExportFormat.YAML, help='Output format: yaml or json (default: yaml)')
     
     return parser.parse_args()
 
+
 ################################################################################
-# CLI COMMAND HANDLERS - Subcommand Processing
+# CLI COMMAND HANDLERS
 ################################################################################
 
 def handle_cli_command(args: argparse.Namespace, config: ConfigManager, logger: logging.Logger) -> int:
@@ -103,17 +104,17 @@ def handle_cli_command(args: argparse.Namespace, config: ConfigManager, logger: 
     Returns:
         Exit code (0 for success, 1 for error).
     """
-    if args.command == 'config':
+    if args.command == CLICommands.CONFIG:
         logger.debug("Starting interactive configuration menu...")
         try:
             menu = ConfigMenu(config, logger)
             menu.run()
             return 0
         except Exception as e:
-            logger.error(f"Configuration menu failed: {e}")
+            logger.error(f"Unexpected error: Configuration menu failed: {e}")
             return 1
         
-    elif args.command == 'import':
+    elif args.command == CLICommands.IMPORT:
         try:
             importer = ConfigImporter(config, logger)
             result = importer.import_from_file(args.file, overwrite=args.overwrite)
@@ -124,26 +125,27 @@ def handle_cli_command(args: argparse.Namespace, config: ConfigManager, logger: 
                 logger.error("Configuration import failed")
                 return 1
         except Exception as e:
-            logger.error(f"Import failed: {e}")
+            logger.error(f"Unexpected error: Import failed: {e}")
             return 1
             
-    elif args.command == 'export':
+    elif args.command == CLICommands.EXPORT:
         try:
             exporter = ConfigExporter(config, logger)
             exporter.export_to_file(output_file=args.output, format=args.format)
             logger.info("Configuration exported successfully")
             return 0
         except Exception as e:
-            logger.error(f"Export failed: {e}")
+            logger.error(f"Unexpected error: Export failed: {e}")
             return 1
     
     return 0
+
 
 ################################################################################
 # SIGNAL HANDLING
 ################################################################################
 
-def shutdown_handler(signum, frame):
+def shutdown_handler(signum: int, frame: Any) -> None:
     """Signal handler for graceful shutdown.
 
     Handles SIGTERM and SIGINT signals for graceful application shutdown.
@@ -165,6 +167,7 @@ def shutdown_handler(signum, frame):
     
     sys.exit(0)
 
+
 ################################################################################
 # MAIN APPLICATION
 ################################################################################
@@ -180,7 +183,7 @@ def main() -> int:
 
     Note:
         Daemon mode is controlled by DAEMON_MODE environment variable,
-        which is set by the bash wrapper (ionos-dyndns.sh).
+        which is set by the bash wrapper (dyndns.sh).
     """
     version = __version__
     software_name = __software_name__
@@ -188,7 +191,7 @@ def main() -> int:
     args = parse_arguments()
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(current_dir, "config.toml")
+    config_path = os.environ.get("CONFIG_FILE", os.path.join(current_dir, AppPaths.CONFIG_FILE))
     config = ConfigManager(current_dir, config_path)
     
     log_level = getattr(logging, config.log_level, logging.INFO)
@@ -231,24 +234,29 @@ def main() -> int:
                 logger.warning("Single update completed with warnings")
                 return 1
         except Exception as e:
-            logger.error(f"Single update failed: {e}")
+            logger.error(f"Unexpected error: Single update failed: {e}")
             return 1
     
     return 0
 
+
 ################################################################################
-# ENTRY POINT - Script Execution Handler
+# ENTRY POINT
 ################################################################################
 
 if __name__ == "__main__":
+    logger: Optional[logging.Logger] = None
+    
     try:
         exit_code = main()
         sys.exit(exit_code)
     except KeyboardInterrupt:
-        logger = LoggerManager.get_logger(__software_name__)
+        if logger is None:
+            logger = LoggerManager.get_logger(__software_name__)
         logger.warning("Application interrupted by user")
         sys.exit(130)
     except Exception as e:
-        logger = LoggerManager.get_logger(__software_name__)
+        if logger is None:
+            logger = LoggerManager.get_logger(__software_name__)
         logger.error(f"Unexpected error: {e}", exc_info=True)
         sys.exit(1)

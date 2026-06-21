@@ -1,4 +1,4 @@
-# IONOS DynDNS
+# DynDNS
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -17,11 +17,10 @@ cd dyndns
 sudo ./setup.sh
 
 # 2. Configure zones and API keys
-ionos-dyndns config
+sudo dyndns config
 
-# 3. Start service
-sudo systemctl start ionos-dyndns
-sudo systemctl enable ionos-dyndns
+# 3. Enable and start service
+sudo systemctl enable --now dyndns
 ```
 ---
 
@@ -52,7 +51,7 @@ sudo ./setup.sh
 ### Interactive Setup
 
 ```bash
-ionos-dyndns config
+sudo dyndns config
 ```
 
 You'll be prompted for:
@@ -62,7 +61,7 @@ You'll be prompted for:
 
 ### Configuration File
 
-Edit `/usr/local/share/ionos-dyndns/config.toml` for advanced settings:
+Edit `/etc/dyndns/config.toml` for advanced settings:
 
 ```toml
 [debug]
@@ -77,7 +76,7 @@ check_interval = 300  # Check IP every 5 minutes
 sync_checks = true  # Enable automatic orphan detection (recommended)
 ```
 
-**Note**: Zones and API credentials are stored in database, not config file. Use `ionos-dyndns config` to manage.
+**Note**: Zones and API credentials are stored in database, not config file. Use `sudo dyndns config` to manage.
 
 ---
 
@@ -87,27 +86,45 @@ sync_checks = true  # Enable automatic orphan detection (recommended)
 
 ```bash
 # Start/stop/restart
-sudo systemctl start ionos-dyndns
-sudo systemctl restart ionos-dyndns
+sudo systemctl start dyndns
+sudo systemctl stop dyndns
+sudo systemctl restart dyndns
 
 # Enable auto-start on boot
-sudo systemctl enable ionos-dyndns
+sudo systemctl enable --now dyndns
 
-# View logs
-sudo journalctl -u ionos-dyndns -f
+# Check service status
+sudo systemctl status dyndns
+```
+
+### View Logs
+
+```bash
+# Last 50 lines (no pager)
+sudo journalctl -u dyndns -n 50 --no-pager
+
+# Follow live
+sudo journalctl -u dyndns -f
+
+# Filter by time
+sudo journalctl -u dyndns --since "1 hour ago"
+sudo journalctl -u dyndns --since today
+
+# Only errors/warnings
+sudo journalctl -u dyndns -p warning
 ```
 
 ### Backup/Restore
 
 ```bash
 # Export configuration
-ionos-dyndns export --output backup.yaml
+sudo dyndns export --output backup.yaml
 
 # Import configuration
-ionos-dyndns import backup.yaml --overwrite
+sudo dyndns import backup.yaml --overwrite
 ```
 
-**Note**: Export creates `~/dyndns-export_YYYYMMDD_HHMMSS.yaml` by default. Records auto-sync on next daemon run after import.
+**Note**: Export creates `~/config-export_YYYYMMDD_HHMMSS.yaml` by default. Records auto-sync on next daemon run after import.
 
 ---
 
@@ -125,13 +142,13 @@ The daemon automatically handles synchronization when `sync_checks = true` (enab
 
 **Zone Sync** - Reconcile database with provider:
 ```bash
-ionos-dyndns config -> "2. Manage records" -> "5. Sync records from provider"
+sudo dyndns config -> "2. Manage records" -> "5. Sync records from provider"
 ```
 Use when: After import, manual changes at IONOS dashboard, or to verify sync status
 
 **Force Update** - Update all records immediately:
 ```bash
-ionos-dyndns config -> "4. Force DNS Update"
+sudo dyndns config -> "4. Force DNS Update"
 ```
 Use when: Testing, force IP refresh, or records deleted from provider
 
@@ -143,16 +160,16 @@ Use when: Testing, force IP refresh, or records deleted from provider
 
 ```bash
 # Check status and logs
-sudo systemctl status ionos-dyndns
-sudo journalctl -u ionos-dyndns -n 50
+sudo systemctl status dyndns
+sudo journalctl -u dyndns -n 50
 
 # Restart service
-sudo systemctl restart ionos-dyndns
+sudo systemctl restart dyndns
 ```
 
 ### API/Network Issues
 
-- **Authentication error:** Update credentials via `ionos-dyndns config`
+- **Authentication error:** Update credentials via `sudo dyndns config`
 - **IPv6 disabled:** Edit `config.toml` -> `ipv6_enabled = false`
 - **Firewall:** Ensure HTTPS (443) outbound allowed
 
@@ -176,10 +193,10 @@ sudo ./setup.sh uninstall --purge
 
 ## Advanced
 
-- **Encryption**: API keys use Fernet (AES-128-CBC with HMAC-SHA256). Key at `/var/lib/ionos-dyndns/.encryption_key` (0600 permissions)
-- **Backup encryption key**: `sudo cp /var/lib/ionos-dyndns/.encryption_key ~/backup.key`
+- **Encryption**: API keys use Fernet (AES-128-CBC with HMAC-SHA256). Key at `/var/lib/dyndns/.encryption_key` (0600 permissions)
+- **Backup encryption key**: `sudo cp /var/lib/dyndns/.encryption_key ~/backup.key`
 - **Export/Import**: Export creates YAML with decrypted API keys for editing
-- **Systemd**: Service runs as root for network access. Logs via `journalctl -u ionos-dyndns`
+- **Systemd**: Service is hardened with `ProtectSystem=full`, `PrivateTmp`, `NoNewPrivileges` (see `SERVICE_*` in `lib/core/config.sh`). Logs via `journalctl -u dyndns`
 
 ---
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # lib/core/config.sh - Configuration variables and paths
 #
-# IONOS-DYNDNS
+# DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
@@ -13,18 +13,18 @@
 ################################################################################
 
 readonly AUTHOR="Manuel Ziel"
-readonly VERSION="1.0.3alpha04"
-readonly LAST_MODIFIED="2026-03-17"
-readonly SOFTWARE_NAME="IONOS-DYNDNS"
+readonly VERSION="1.0.3-alpha05"
+readonly LAST_MODIFIED="2026-06-21"
+readonly SOFTWARE_NAME="DynDNS"
 readonly SOFTWARE_DESCRIPTION="Dynamic DNS Client for IONOS"
 
 # Generate directory-safe name from SOFTWARE_NAME and export for sourced modules
 readonly SOFTWARE_DIR_NAME=$(echo "${SOFTWARE_NAME,,}" | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
-export SOFTWARE_DIR_NAME                                            # Export for modules that need it
+export SOFTWARE_DIR_NAME  # Export for modules that need it
 
 # Systemd journal identifier (for consistent logging across Python and Bash)
 readonly SYSLOG_IDENTIFIER="${SOFTWARE_DIR_NAME}"
-export SYSLOG_IDENTIFIER                                            # Export for Python modules
+export SYSLOG_IDENTIFIER  # Export for Python modules
 
 # Standard installation paths
 readonly BIN="/usr/local/bin"
@@ -36,10 +36,13 @@ export SHARE_DIR                                                    # Export for
 readonly ETC_DIR="/etc/${SOFTWARE_DIR_NAME}"                        # Software-specific config directory
 readonly VAR_LIB_DIR="/var/lib/${SOFTWARE_DIR_NAME}"                # Application data directory
 
-# Runtime file paths
-readonly PID_FILE="/run/${SOFTWARE_DIR_NAME}.pid"
-readonly LOCK_FILE="/run/${SOFTWARE_DIR_NAME}.lock"
-readonly CONFIG_FILE="${SHARE_DIR}/config.toml"
+# Runtime file paths - FHS compliant.
+# Uses /run/<name>/ subdirectory, created by systemd RuntimeDirectory=<name>
+# with proper ownership for the service user (works for root and non-root).
+readonly RUNTIME_DIR="/run/${SOFTWARE_DIR_NAME}"
+readonly PID_FILE="${RUNTIME_DIR}/${SOFTWARE_DIR_NAME}.pid"
+readonly LOCK_FILE="${RUNTIME_DIR}/${SOFTWARE_DIR_NAME}.lock"
+readonly CONFIG_FILE="${ETC_DIR}/config.toml"
 
 # Development/local paths (when not installed)
 # readonly DEV_PID_FILE="${_DIR}/${SOFTWARE_DIR_NAME}.pid"
@@ -48,49 +51,87 @@ readonly CONFIG_FILE="${SHARE_DIR}/config.toml"
 # Main executable path
 readonly MAIN_EXECUTABLE="${BIN_DIR}/${SOFTWARE_DIR_NAME}.sh"
 
-# Python script path
-readonly PYTHON_SCRIPT="${SHARE_DIR}/ionos-dyndns.py"
+# Python application
+readonly PYTHON_SCRIPT="${SHARE_DIR}/dyndns.py"
 
-# Installation source configuration 
+# Installation source configuration
 # Format: "source_path:destination_path:type"
 # Types: file, dir, executable, symlink
 readonly INSTALL_SOURCES=(
-    # Main bash runtime script
-    "ionos-dyndns.sh:${BIN_DIR}/ionos-dyndns.sh:executable"     # Main runtime script
-
-    # Python application and modules
-    "ionos-dyndns.py:${SHARE_DIR}/ionos-dyndns.py:executable"   # Python application
-    "src/:${SHARE_DIR}/src/:dir"                                # Python modules
+    # Main bash runtime script (in libexec for system executables)
+    "dyndns.sh:${BIN_DIR}/dyndns.sh:executable"                         # Main runtime script
+    
+    # Python application and modules (together in share for simplicity)
+    "dyndns.py:${SHARE_DIR}/dyndns.py:executable"                       # Python application
+    "src/:${SHARE_DIR}/src/:dir"                                        # Python modules
     
     # System integration (symlink for easy access)
-    "${MAIN_EXECUTABLE}:${BIN_SYMLINK}:symlink"                 # Main command symlink
+    "${MAIN_EXECUTABLE}:${BIN_SYMLINK}:symlink"                         # Main command symlink
     
-    # Library modules (bash runtime support) - FIXED PATH
-    "lib/:${SHARE_DIR}/lib/:dir"                                # All lib modules for bash runtime
+    # Library modules (bash runtime support)
+    "lib/:${SHARE_DIR}/lib/:dir"                                        # All lib modules for bash runtime
     
     # Configuration files
-    "config.toml:${SHARE_DIR}/config.toml:file"                 # Main configuration file
-    "requirements.txt:${SHARE_DIR}/requirements.txt:file"       # Python dependencies
+    "config.toml:${ETC_DIR}/config.toml:file"                           # Main configuration file
+    "requirements.txt:${SHARE_DIR}/requirements.txt:file"               # Python dependencies
     
     # Documentation
-    "README.md:${SHARE_DIR}/README.md:file"                     # Documentation
-    "LICENSE:${SHARE_DIR}/LICENSE:file"                         # License file
-    "CHANGELOG.md:${SHARE_DIR}/CHANGELOG.md:file"               # Changelog
+    "README.md:${SHARE_DIR}/README.md:file"                             # Documentation
+    "LICENSE:${SHARE_DIR}/LICENSE:file"                                 # License file
+    "CHANGELOG.md:${SHARE_DIR}/CHANGELOG.md:file"                       # Changelog
 )
 
 # Service configuration
-readonly CREATE_SERVICE=true                                    # Set to false to disable service creation
-readonly SERVICE_NAME="${SOFTWARE_DIR_NAME}.service"            # Service file name
-readonly SERVICE_EXEC_START="${BIN_SYMLINK} start --daemon"     # Command to start service (use symlink!)
-readonly SERVICE_EXEC_STOP="${BIN_SYMLINK} stop"                # Command to stop service (use symlink!)
-readonly SERVICE_TYPE="forking"                                 # forking (bash forks python, exits, python keeps running)
-readonly SERVICE_PIDFILE="${PID_FILE}"                          # PID file for forking service type
-readonly SERVICE_USER="root"                                    # User to run service as (empty = root)
-readonly SERVICE_RESTART="always"                               # no, on-success, on-failure, on-abnormal, on-abort, always
-readonly SERVICE_RESTART_SEC="5"                                # Seconds to wait before restart
-readonly SERVICE_AFTER="network-online.target"                  # Dependencies (space-separated)
-readonly SERVICE_WANTS="network-online.target"                  # Optional dependencies (space-separated) 
-readonly SERVICE_WANTED_BY="multi-user.target"                  # Install target
+readonly CREATE_SERVICE=true                                            # Set to false to disable service creation
+readonly SERVICE_NAME="${SOFTWARE_DIR_NAME}.service"                    # Service file name
+readonly SERVICE_EXEC_START="${BIN_SYMLINK} start --daemon"             # Command to start service (use symlink!)
+readonly SERVICE_EXEC_STOP="${BIN_SYMLINK} stop"                        # Command to stop service (use symlink!)
+readonly SERVICE_TYPE="forking"                                         # forking (bash launches Python with & and writes PID file)
+readonly SERVICE_PIDFILE="${PID_FILE}"                                  # PID file for process tracking
+readonly SERVICE_USER="dyndns"                                          # User to run service as (empty = root)
+readonly SERVICE_GROUP="dyndns"                                         # Group (empty = same as SERVICE_USER, useful for shared media groups)
+readonly SERVICE_CREATE_USER=true                                       # Auto-create user/group during install (system user, no login)
+readonly SERVICE_USER_HOME=""                                           # Home dir for created user (empty = VAR_LIB_DIR)
+readonly SERVICE_USER_SHELL="/usr/sbin/nologin"                         # Login shell for created user (nologin = secure default)
+readonly SERVICE_UMASK=""                                               # Umask (empty = systemd default 0022; "0002" for group-writable files 664/775)
+readonly SERVICE_SUPPLEMENTARY_GROUPS=""                                # Extra groups the service user joins (space-separated)
+readonly SERVICE_RESTART="always"                                       # no, on-success, on-failure, on-abnormal, on-abort, always
+readonly SERVICE_RESTART_SEC="5"                                        # Seconds to wait before restart
+readonly SERVICE_AFTER="network-online.target"                          # Dependencies (space-separated)
+readonly SERVICE_WANTS="network-online.target"                          # Optional dependencies (space-separated) 
+readonly SERVICE_WANTED_BY="multi-user.target"                          # Install target
+
+# Timeouts (seconds; empty string = systemd default)
+readonly SERVICE_TIMEOUT_START_SEC="60"                                 # Max startup time before systemd kills the unit
+readonly SERVICE_TIMEOUT_STOP_SEC="15"                                  # Grace period before SIGKILL on stop
+
+# Standard I/O redirection (see systemd.exec(5) for valid values)
+readonly SERVICE_STANDARD_OUTPUT="journal"                              # journal | null | syslog | kmsg | file:PATH | ...
+readonly SERVICE_STANDARD_ERROR="journal"                               # Usually mirrors SERVICE_STANDARD_OUTPUT
+readonly SERVICE_STANDARD_INPUT="null"                                  # null for daemons (no stdin)
+
+# Security hardening (see systemd.exec(5))
+#   SERVICE_PROTECT_SYSTEM: off | true | full | strict
+#     full   = /usr, /boot, /etc read-only; /var/lib, /home, /media writable
+#     strict = everything read-only except ReadWritePaths= (brittle with
+#              dynamic or late-mounted data dirs — causes EROFS / 226/NAMESPACE)
+readonly SERVICE_NO_NEW_PRIVILEGES="true"                               # Block setuid/fs-capabilities elevation
+readonly SERVICE_PRIVATE_TMP="true"                                     # Per-service /tmp and /var/tmp
+readonly SERVICE_PROTECT_SYSTEM="full"                                  # full = /usr/boot/efi read-only, /var writable (venv lives there)
+readonly SERVICE_PROTECT_HOME=""                                        # Empty = off; "true" blocks /home
+readonly SERVICE_RESTART_PREVENT_EXIT_STATUS="0"                        # Exit codes that must NOT trigger Restart= (space-separated)
+
+# Data directory permissions for user-configured paths (source_dir, target_dir, ...)
+# read from the application config file at install time.
+#   "2775" = group-writable, SGID (files inherit group)      — shared group
+#   "2777" = world-writable, SGID                            — NFS, any UID
+#   "3777" = world-writable + sticky (only owner/root deletes) — safer shared
+readonly DATA_DIR_MODE="2775"                                           # Group-writable, SGID for shared group access
+
+# Space-separated TOML/INI keys whose values are filesystem paths. These
+# directories are pre-created on install (chown SERVICE_USER:SERVICE_GROUP,
+# chmod DATA_DIR_MODE). Empty = feature disabled.
+readonly DATA_DIR_CONFIG_KEYS=""
 
 # Examples for different service types:
 # Web service with database dependency:
@@ -98,7 +139,7 @@ readonly SERVICE_WANTED_BY="multi-user.target"                  # Install target
 # readonly SERVICE_WANTS="postgresql.service"
 # readonly SERVICE_USER="www-data"
 
-# Python daemon:
+# Python daemon (default - uses exec to replace shell with Python):
 # readonly SERVICE_TYPE="simple" 
 # readonly SERVICE_RESTART="on-failure"
 # readonly SERVICE_USER="myapp"
@@ -188,12 +229,15 @@ fi
 # You only need to specify which commands are required here
 
 # Python environment settings (for Python projects)
-# All paths are for installed mode
-readonly VENV_DIR="${SHARE_DIR}/lib/venv"                           # Virtual environment location
-export VENV_DIR                                                     # Export for Python subprocess
-export DATA_DIR                                                     # Export for Python subprocess
-export CONFIG_FILE                                                  # Export for Python subprocess
-export PID_FILE                                                     # Export for Python subprocess
-readonly PYTHON_INSTALLED_SRC_DIR="${SHARE_DIR}/src"                # Python source modules
-readonly PYTHON_INSTALLED_SCRIPT="${SHARE_DIR}/ionos-dyndns.py"     # Main Python script
-readonly REQUIREMENTS_FILE="${SHARE_DIR}/requirements.txt"          # Python dependencies
+# All paths are for installed mode.
+# VENV lives under VAR_LIB_DIR (not SHARE_DIR) because the service user needs
+# write access to install/update packages; SHARE_DIR is read-only per FHS.
+readonly VENV_DIR="${VAR_LIB_DIR}/venv"                                 # Virtual environment location (writable runtime state)
+export VENV_DIR                                                         # Export for Python subprocess
+export DATA_DIR                                                         # Export for Python subprocess
+export CONFIG_FILE                                                      # Export for Python subprocess
+export PID_FILE                                                         # Export for Python subprocess
+readonly PYTHON_INSTALLED_SRC_DIR="${SHARE_DIR}/src"                    # Python source modules
+readonly PYTHON_INSTALLED_SCRIPT="${SHARE_DIR}/dyndns.py"               # Main Python script
+readonly REQUIREMENTS_FILE="${SHARE_DIR}/requirements.txt"              # Python dependencies
+# Note: PYTHON_SRC_DIR is set dynamically in python.sh export_python_environment()
