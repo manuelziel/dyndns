@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/core/essentials.sh - Essential utility functions
+# lib/core/essentials.sh
 #
 # DynDNS
 #
@@ -230,8 +230,9 @@ service_restart() {
         return 0
     else
         return 1
-    fi
+    fi    
 }
+
 
 service_stop() {
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
@@ -276,7 +277,7 @@ get_service_status() {
 }
 
 ################################################################################
-# MENU & VERSION
+# MENU & SERVICE STATUS
 ################################################################################
 
 show_software_status() {

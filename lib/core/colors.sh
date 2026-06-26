@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/core/colors.sh - Color definitions and styling
+# lib/core/colors.sh
 #
 # DynDNS
 #

@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/core/logging.sh - Logging and output functions
+# lib/core/logging.sh
 #
 # DynDNS
 #
@@ -61,9 +61,9 @@ print_section() {
 }
 
 print_banner() {
-    local software_name="${SOFTWARE_NAME:-[SOFTWARE_NAME]}"
+    local software_name="${SOFTWARE_NAME:-DynDNS}"
     local mode="${1:-[MODE]}"
-    local description="${SOFTWARE_DESCRIPTION:-[SOFTWARE_DESCRIPTION]}"
+    local description="${SOFTWARE_DESCRIPTION:-Dynamic DNS Client for IONOS}"
     local version="${VERSION:-[VERSION]}"
 
     echo ""
@@ -74,3 +74,4 @@ print_banner() {
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
 }
+

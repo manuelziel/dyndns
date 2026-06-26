@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/runtime/daemon.sh - Daemon management functions
+# lib/runtime/daemon.sh
 #
 # DynDNS
 #
@@ -27,6 +27,7 @@ is_running() {
         fi
     fi
 
+    # More specific pattern to avoid false positives (e.g., editors)
     if pgrep -f "^python3 .*${python_script}" > /dev/null 2>&1; then
         return 0
     fi

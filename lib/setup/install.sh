@@ -1,10 +1,9 @@
 #!/bin/bash
-# lib/setup/install.sh - Installation and management functions
+# lib/setup/install.sh
 #
-# [SOFTWARE_NAME] Script
+# DynDNS
 #
-# Created: [CREATION_DATE]
-# Author: [AUTHOR]
+# Author: Manuel Ziel
 # License: MIT
 #
 # This program is free software: you can redistribute it and/or modify
@@ -13,11 +12,19 @@
 # CORE INSTALLATION FUNCTIONS
 ################################################################################
 
+if ! command -v setup_optional_function &>/dev/null; then
+    setup_optional_function() {
+        print_info "No custom setup hook implemented"
+        return 0
+    }
+fi
+
 do_install() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local force_mode="${FORCE_MODE:-0}"
     local create_service_flag="${CREATE_SERVICE:-false}"
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
+    local enable_optional_dependency="${ENABLE_OPTIONAL_DEPENDENCY:-0}"
 
     print_section "Installing ${software_name}"
 
@@ -32,6 +39,13 @@ do_install() {
     fi
     
     backup_installation || true  # Don't fail if backup fails
+
+    if [[ "${enable_optional_dependency}" -eq 1 ]]; then
+        if ! setup_optional_function; then
+            print_error "Failed to setup optional dependencies/hooks"
+            return 1
+        fi
+    fi
     
     if ! install_files; then
         return 1
@@ -107,13 +121,6 @@ do_update() {
             print_warning "Failed to update Python environment, continuing..."
         fi
     fi
-
-    # configure optional dependencies in config.sh
-    if [[ "${enable_optional_dependency}" -eq 1 ]]; then
-        if ! setup_optional_function; then
-            print_error "Failed to setup or install optional dependencies, continuing..."
-        fi
-    fi
     
     if ! do_install; then
         print_error "Update failed!"
@@ -166,6 +173,7 @@ do_uninstall() {
     local bin_dir="${BIN_DIR:-"[BIN_DIR]"}"
     local share_dir="${SHARE_DIR:-"[SHARE_DIR]"}"
     local bin_symlink="${BIN_SYMLINK:-"[BIN_SYMLINK]"}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
 
     print_section "Uninstalling ${software_name}"
 
@@ -184,21 +192,7 @@ do_uninstall() {
         fi
     fi
     
-    if service_exists; then
-        print_info "Stopping and removing service..."
-
-        if service_stop && service_disable; then
-            print_success "Service stopped and disabled"
-            if rm -f "${service_path}"; then
-                print_success "Service file removed"
-                service_daemon_reload
-            else
-                print_warning "Failed to remove service file, continuing..."
-            fi
-        else
-            print_warning "Failed to stop/disable service, continuing..."
-        fi
-    fi
+    remove_systemd_services "${service_name}" "${service_path}"
 
     if [[ -L "${bin_symlink}" ]]; then
         rm -f "${bin_symlink}"
@@ -221,7 +215,61 @@ do_uninstall() {
         print_info "Note: Data directory ${VAR_LIB_DIR:-/var/lib/[SOFTWARE_DIR_NAME]} was preserved"
         print_info "Use 'purge' or 'uninstall --purge' to remove all data"
     fi
+
     return 0
+}
+
+get_template_unit_files() {
+    local template_dir="${_DIR}/systemd"
+    if [[ ! -d "${template_dir}" ]]; then
+        return 0
+    fi
+    find "${template_dir}" -maxdepth 1 -type f \( -name "*.service" -o -name "*.target" \) -print0 2>/dev/null
+}
+
+remove_systemd_services() {
+    local service_name="$1"
+    local service_path="$2"
+    local template_files=()
+    local unit_file target_name filename dest_path
+
+    while IFS= read -r -d '' file; do
+        template_files+=("$file")
+    done < <(get_template_unit_files)
+
+    if [[ ${#template_files[@]} -gt 0 ]]; then
+        print_info "Stopping and removing systemd services..."
+        for unit_file in "${template_files[@]}"; do
+            filename=$(basename "${unit_file}")
+            target_name="${filename}"
+            if [[ "${filename}" == "template.service" ]]; then
+                target_name="${service_name}"
+            fi
+            
+            if systemctl is-active --quiet "${target_name}" 2>/dev/null; then
+                systemctl stop "${target_name}" 2>/dev/null || true
+            fi
+            if systemctl is-enabled --quiet "${target_name}" 2>/dev/null; then
+                systemctl disable --quiet "${target_name}" 2>/dev/null || true
+            fi
+            
+            dest_path="/etc/systemd/system/${target_name}"
+            if rm -f "${dest_path}" 2>/dev/null; then
+                print_success "Removed service file: ${dest_path}"
+            fi
+        done
+        service_daemon_reload
+    elif service_exists; then
+        # Fallback to single-service legacy uninstallation
+        print_info "Stopping and removing service..."
+        if service_stop && service_disable; then
+            print_success "Service stopped and disabled"
+            if rm -f "${service_path}"; then
+                print_success "Service file removed"
+                service_daemon_reload
+            fi
+        fi
+    fi
 }
 
 do_purge() {
@@ -270,15 +318,6 @@ do_purge() {
 # HELPER FUNCTIONS - Setup and Utilities  
 ################################################################################
 
-# Create dedicated system user and group for the service.
-#
-# Controlled by SERVICE_CREATE_USER. Idempotent: safe to call on reinstall.
-# Creates:
-#   - Group SERVICE_GROUP (or SERVICE_USER if unset) as system group
-#   - User SERVICE_USER as system user (no login, home = SERVICE_USER_HOME)
-#   - Adds SERVICE_SUPPLEMENTARY_GROUPS (space-separated) to the user
-#
-# Returns 0 on success or when not configured; 1 on failure.
 create_service_user() {
     local create_user="${SERVICE_CREATE_USER:-false}"
     local service_user="${SERVICE_USER:-root}"
@@ -297,7 +336,6 @@ create_service_user() {
         return 0
     fi
 
-    # Create primary group first (system group, -r)
     if getent group "${service_group}" >/dev/null 2>&1; then
         print_info "Group already exists: ${service_group}"
     else
@@ -309,7 +347,6 @@ create_service_user() {
         fi
     fi
 
-    # Create user with the primary group
     if getent passwd "${service_user}" >/dev/null 2>&1; then
         print_info "User already exists: ${service_user}"
     else
@@ -323,7 +360,6 @@ create_service_user() {
         fi
     fi
 
-    # Add supplementary groups (only those that exist on the system)
     if [[ -n "${supplementary_groups}" ]]; then
         for group in ${supplementary_groups}; do
             if ! getent group "${group}" >/dev/null 2>&1; then
@@ -383,23 +419,12 @@ create_data_directory() {
 
     chmod "${dir_mode}" "${var_lib_dir}" 2>/dev/null || true
 
-    # Make existing data files group-writable so both the service user and
-    # admin processes (root via sudo) can update them without ownership
-    # drift. u+rwX: owner rw + exec/traverse dirs. g+rwX: same for group.
-    # Without this, a pre-existing mode-0644 SQLite DB (e.g. from a prior
-    # root-owned test run) would still lock out the service user after
-    # chown, because SQLite needs write access to the file itself.
     if [[ -d "${var_lib_dir}" ]]; then
         chmod -R u+rwX,g+rwX "${var_lib_dir}" 2>/dev/null || true
     fi
     return 0
 }
 
-# Remove the dedicated service user and group created by create_service_user.
-#
-# Only called from do_purge() when SERVICE_CREATE_USER=true. Purge already
-# asks for confirmation upfront, so no second prompt here. Files still
-# owned by the user become orphaned (UID numbers); clean those up separately.
 remove_service_user() {
     local create_user="${SERVICE_CREATE_USER:-false}"
     local service_user="${SERVICE_USER:-root}"
@@ -417,8 +442,6 @@ remove_service_user() {
         fi
     fi
 
-    # Only remove group if different from user name and still exists.
-    # Skip if it has remaining members (shared group used by other users).
     if [[ "${service_group}" != "${service_user}" ]] && \
        getent group "${service_group}" >/dev/null 2>&1; then
         local remaining_members
@@ -464,7 +487,6 @@ install_files() {
 
     print_info "Installing ${software_name} files..."
     
-    # Process INSTALL_SOURCES array if defined
     if [[ "${#install_sources[@]}" -gt 0 ]]; then
         for item in "${install_sources[@]}"; do
             # Skip empty or comment lines
@@ -492,17 +514,16 @@ install_files() {
         print_info "Configure INSTALL_SOURCES array in config.sh"
     fi
     
-    # Report results
-    if [[ $install_count -gt 0 ]]; then
+    if [[ "$install_count" -gt 0 ]]; then
         print_success "Successfully installed $install_count item(s)"
     fi
     
-    if [[ $failed_count -gt 0 ]]; then
+    if [[ "$failed_count" -gt 0 ]]; then
         print_error "Failed to install $failed_count item(s)"
         return 1
     fi
     
-    if [[ $install_count -eq 0 ]]; then
+    if [[ "$install_count" -eq 0 ]]; then
         print_warning "No files were installed"
         return 1
     fi
@@ -556,6 +577,7 @@ install_single_item() {
             fi
             ;;
         "dir")
+            rm -rf "$dest_path"
             if cp -r "$full_source" "$dest_path"; then
                 print_success "Installed directory: $source_path -> $dest_path"
                 return 0
@@ -571,10 +593,45 @@ install_single_item() {
     esac
 }
 
-create_service() {
+setup_data_directories() {
+    if [[ ! -f "${CONFIG_FILE}" || -z "${DATA_DIR_CONFIG_KEYS:-}" ]]; then
+        return 0
+    fi
+
+    local data_dir_mode="${DATA_DIR_MODE:-2775}"
+    local service_user="${SERVICE_USER:-root}"
+    local service_group="${SERVICE_GROUP:-${service_user}}"
+    local key dir_value
+
+    for key in ${DATA_DIR_CONFIG_KEYS}; do
+        dir_value=$(grep -E "^${key}\s*=" "${CONFIG_FILE}" 2>/dev/null \
+            | sed 's/^[^=]*=\s*"//;s/"\s*$//' | head -1)
+        if [[ -z "${dir_value}" ]]; then
+            continue
+        fi
+
+        if [[ ! -d "${dir_value}" ]]; then
+            if mkdir -p "${dir_value}" 2>/dev/null; then
+                print_info "Created ${key}: ${dir_value}"
+            else
+                print_warning "Failed to create ${key}: ${dir_value}"
+            fi
+        fi
+        
+        if [[ -d "${dir_value}" && "${service_user}" != "root" ]]; then
+            if getent passwd "${service_user}" >/dev/null 2>&1; then
+                chown "${service_user}:${service_group}" "${dir_value}" 2>/dev/null || \
+                    print_warning "Failed to chown ${dir_value}"
+            fi
+        fi
+        chmod "${data_dir_mode}" "${dir_value}" 2>/dev/null || \
+            print_warning "Failed to chmod ${data_dir_mode} ${dir_value}"
+    done
+}
+
+customize_systemd_unit() {
+    local dest_path="$1"
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
-    local service_content
     local service_after="${SERVICE_AFTER:-network.target}"
     local service_wants="${SERVICE_WANTS:-}"
     local service_type="${SERVICE_TYPE:-simple}"
@@ -586,142 +643,124 @@ create_service() {
     local service_group="${SERVICE_GROUP:-${service_user}}"
     local service_umask="${SERVICE_UMASK:-}"
     local service_supplementary_groups="${SERVICE_SUPPLEMENTARY_GROUPS:-}"
+    local service_part_of="${SERVICE_PART_OF:-}"
+    local service_environment="${SERVICE_ENVIRONMENT:-}"
+    local service_read_write_paths="${SERVICE_READ_WRITE_PATHS:-}"
     local service_wanted_by="${SERVICE_WANTED_BY:-multi-user.target}"
-    local service_path="${SERVICE_PATH:-/etc/systemd/system/${service_name}}"
+
+    # Determine RuntimeDirectoryMode based on User/Group
+    local runtime_dir_mode="0755"
+    if [[ "${service_group}" != "${service_user}" ]]; then
+        runtime_dir_mode="0775"
+    fi
+
+    if ! sed -i \
+        -e "s|{{SOFTWARE_NAME}}|${software_name}|g" \
+        -e "s|{{SERVICE_AFTER}}|${service_after}|g" \
+        -e "s|{{SERVICE_WANTS}}|${service_wants}|g" \
+        -e "s|{{SERVICE_TYPE}}|${service_type}|g" \
+        -e "s|{{SERVICE_USER}}|${service_user}|g" \
+        -e "s|{{SERVICE_GROUP}}|${service_group}|g" \
+        -e "s|{{SHARE_DIR}}|${SHARE_DIR}|g" \
+        -e "s|{{SOFTWARE_DIR_NAME}}|${SOFTWARE_DIR_NAME}|g" \
+        -e "s|{{RUNTIME_DIRECTORY_MODE}}|${runtime_dir_mode}|g" \
+        -e "s|{{SERVICE_UMASK}}|${service_umask}|g" \
+        -e "s|{{SERVICE_SUPPLEMENTARY_GROUPS}}|${service_supplementary_groups}|g" \
+        -e "s|{{SERVICE_PIDFILE}}|${SERVICE_PIDFILE:-}|g" \
+        -e "s|{{SERVICE_EXEC_START}}|${service_exec_start}|g" \
+        -e "s|{{SERVICE_EXEC_STOP}}|${service_exec_stop}|g" \
+        -e "s|{{SERVICE_RESTART}}|${service_restart}|g" \
+        -e "s|{{SERVICE_RESTART_PREVENT_EXIT_STATUS}}|${SERVICE_RESTART_PREVENT_EXIT_STATUS:-0}|g" \
+        -e "s|{{SERVICE_RESTART_SEC}}|${service_restart_sec:-5}|g" \
+        -e "s|{{SERVICE_TIMEOUT_START_SEC}}|${SERVICE_TIMEOUT_START_SEC:-60}|g" \
+        -e "s|{{SERVICE_TIMEOUT_STOP_SEC}}|${SERVICE_TIMEOUT_STOP_SEC:-15}|g" \
+        -e "s|{{SERVICE_STANDARD_OUTPUT}}|${SERVICE_STANDARD_OUTPUT:-journal}|g" \
+        -e "s|{{SERVICE_STANDARD_ERROR}}|${SERVICE_STANDARD_ERROR:-journal}|g" \
+        -e "s|{{SERVICE_STANDARD_INPUT}}|${SERVICE_STANDARD_INPUT:-null}|g" \
+        -e "s|{{SERVICE_NO_NEW_PRIVILEGES}}|${SERVICE_NO_NEW_PRIVILEGES:-true}|g" \
+        -e "s|{{SERVICE_PRIVATE_TMP}}|${SERVICE_PRIVATE_TMP:-true}|g" \
+        -e "s|{{SERVICE_PROTECT_SYSTEM}}|${SERVICE_PROTECT_SYSTEM:-full}|g" \
+        -e "s|{{SERVICE_PROTECT_HOME}}|${SERVICE_PROTECT_HOME:-}|g" \
+        -e "s|{{SERVICE_ENVIRONMENT}}|${service_environment}|g" \
+        -e "s|{{SERVICE_READ_WRITE_PATHS}}|${service_read_write_paths}|g" \
+        -e "s|{{SERVICE_PART_OF}}|${service_part_of}|g" \
+        -e "s|{{SERVICE_WANTED_BY}}|${service_wanted_by}|g" \
+        "${dest_path}"; then
+        print_error "Failed to customize systemd unit file: $(basename "${dest_path}")"
+        return 1
+    fi
+    return 0
+}
+
+deploy_single_systemd_unit() {
+    local unit_file="$1"
+    local filename=$(basename "${unit_file}")
+    local target_name="${filename}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
+
+    if [[ "${filename}" == "template.service" ]]; then
+        target_name="${service_name}"
+    fi
+
+    local dest_path="/etc/systemd/system/${target_name}"
+
+    print_info "Deploying systemd unit: ${target_name}"
+
+    if ! cp "${unit_file}" "${dest_path}"; then
+        print_error "Failed to copy systemd unit file to ${dest_path}"
+        return 1
+    fi
+
+    if ! chmod 644 "${dest_path}"; then
+        print_warning "Failed to set permissions on ${dest_path} to 644"
+    fi
+
+    customize_systemd_unit "${dest_path}" || return 1
+
+    # Clean up empty lines or lines with empty values (e.g., "PIDFile=" or "Environment=""") using POSIX BRE
+    sed -i '/^[A-Za-z0-9]\{1,\}=[[:space:]]*$/d' "${dest_path}"
+    sed -i '/^[A-Za-z0-9]\{1,\}=""[[:space:]]*$/d' "${dest_path}"
+    return 0
+}
+
+create_service() {
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
+    local template_dir="${_DIR}/systemd"
 
     if [[ -z "${service_name}" ]] || [[ "${service_name}" == "[SERVICE_NAME]" ]]; then
         print_info "No service configuration needed (${service_name} not configured)"
         return 0
     fi
 
-    print_info "Creating systemd service: ${service_name}"
-
-    service_content="[Unit]
-Description=${software_name} Service
-After=${service_after}"
-
-    if [[ -n "${service_wants}" ]]; then
-        service_content+="\nWants=${service_wants}"
-    fi
-    
-    service_content+="\n
-[Service]
-Type=${service_type}
-User=${service_user}
-Group=${service_group}
-WorkingDirectory=${SHARE_DIR}"
-
-    # RuntimeDirectory creates /run/<name>/ at service start, owned by
-    # User:Group, and auto-removes it on stop. Required for non-root
-    # services that write PID files under /run.
-    service_content+="\nRuntimeDirectory=${SOFTWARE_DIR_NAME}"
-    if [[ "${service_group}" != "${service_user}" ]]; then
-        service_content+="\nRuntimeDirectoryMode=0775"
-    else
-        service_content+="\nRuntimeDirectoryMode=0755"
+    if [[ ! -d "${template_dir}" ]]; then
+        print_error "Systemd template directory not found: ${template_dir}"
+        return 1
     fi
 
-    if [[ -n "${service_umask}" ]]; then
-        service_content+="\nUMask=${service_umask}"
+    local template_files=()
+    while IFS= read -r -d '' file; do
+        template_files+=("$file")
+    done < <(get_template_unit_files)
+
+    if [[ ${#template_files[@]} -eq 0 ]]; then
+        print_error "No systemd unit files (*.service, *.target) found in ${template_dir}"
+        return 1
     fi
 
-    if [[ -n "${service_supplementary_groups}" ]]; then
-        service_content+="\nSupplementaryGroups=${service_supplementary_groups}"
-    fi
+    print_info "Creating systemd services from template directory..."
 
-    # Add PIDFile for forking service type
-    if [[ -n "${SERVICE_PIDFILE:-}" ]]; then
-        service_content+="\nPIDFile=${SERVICE_PIDFILE}"
-    fi
+    local unit_file
+    for unit_file in "${template_files[@]}"; do
+        deploy_single_systemd_unit "${unit_file}" || return 1
+    done
 
-    service_content+="\nExecStart=${service_exec_start}
-ExecStop=${service_exec_stop}"
+    setup_data_directories
 
-    if [[ "${service_restart}" != "no" ]]; then
-        service_content+="\nRestart=${service_restart}"
-        local prevent_exit="${SERVICE_RESTART_PREVENT_EXIT_STATUS:-0}"
-        if [[ -n "${prevent_exit}" ]]; then
-            service_content+="\nRestartPreventExitStatus=${prevent_exit}"
-        fi
-        if [[ -n "${service_restart_sec}" ]] && [[ "${service_restart_sec}" != "0" ]]; then
-            service_content+="\nRestartSec=${service_restart_sec}"
-        fi
-    fi
-
-    local timeout_start="${SERVICE_TIMEOUT_START_SEC:-60}"
-    local timeout_stop="${SERVICE_TIMEOUT_STOP_SEC:-15}"
-    [[ -n "${timeout_start}" ]] && service_content+="\nTimeoutStartSec=${timeout_start}"
-    [[ -n "${timeout_stop}" ]] && service_content+="\nTimeoutStopSec=${timeout_stop}"
-
-    local std_output="${SERVICE_STANDARD_OUTPUT:-journal}"
-    local std_error="${SERVICE_STANDARD_ERROR:-journal}"
-    local std_input="${SERVICE_STANDARD_INPUT:-null}"
-    [[ -n "${std_output}" ]] && service_content+="\nStandardOutput=${std_output}"
-    [[ -n "${std_error}" ]] && service_content+="\nStandardError=${std_error}"
-    [[ -n "${std_input}" ]] && service_content+="\nStandardInput=${std_input}"
-    service_content+="\nSyslogIdentifier=${SOFTWARE_DIR_NAME}"
-
-    # Security hardening — see systemd.exec(5) and config.sh for details.
-    service_content+="\n\n# Security hardening"
-    local no_new_privs="${SERVICE_NO_NEW_PRIVILEGES:-true}"
-    local private_tmp="${SERVICE_PRIVATE_TMP:-true}"
-    local protect_system="${SERVICE_PROTECT_SYSTEM:-full}"
-    local protect_home="${SERVICE_PROTECT_HOME:-}"
-    [[ -n "${no_new_privs}" ]] && service_content+="\nNoNewPrivileges=${no_new_privs}"
-    [[ -n "${private_tmp}" ]] && service_content+="\nPrivateTmp=${private_tmp}"
-    [[ -n "${protect_system}" ]] && service_content+="\nProtectSystem=${protect_system}"
-    [[ -n "${protect_home}" ]] && service_content+="\nProtectHome=${protect_home}"
-
-    # Optional: pre-create & chown/chmod data directories listed under keys
-    # in DATA_DIR_CONFIG_KEYS (space-separated) in the application config
-    # file. No-op when DATA_DIR_CONFIG_KEYS is empty. Applies DATA_DIR_MODE
-    # (default 2775) and ownership SERVICE_USER:SERVICE_GROUP.
-    if [[ -f "${CONFIG_FILE}" && -n "${DATA_DIR_CONFIG_KEYS:-}" ]]; then
-        local data_dir_mode="${DATA_DIR_MODE:-2775}"
-        local key dir_value
-        for key in ${DATA_DIR_CONFIG_KEYS}; do
-            dir_value=$(grep -E "^${key}\s*=" "${CONFIG_FILE}" 2>/dev/null \
-                | sed 's/^[^=]*=\s*"//;s/"\s*$//' | head -1)
-            if [[ -n "${dir_value}" ]]; then
-                if [[ ! -d "${dir_value}" ]]; then
-                    if mkdir -p "${dir_value}" 2>/dev/null; then
-                        print_info "Created ${key}: ${dir_value}"
-                    else
-                        print_warning "Failed to create ${key}: ${dir_value}"
-                    fi
-                fi
-                if [[ -d "${dir_value}" && "${SERVICE_USER}" != "root" ]]; then
-                    if getent passwd "${SERVICE_USER}" >/dev/null 2>&1; then
-                        chown "${SERVICE_USER}:${SERVICE_GROUP:-${SERVICE_USER}}" "${dir_value}" 2>/dev/null || \
-                            print_warning "Failed to chown ${dir_value}"
-                    fi
-                fi
-                chmod "${data_dir_mode}" "${dir_value}" 2>/dev/null || \
-                    print_warning "Failed to chmod ${data_dir_mode} ${dir_value}"
-            fi
-        done
-    fi
-    
-    service_content+="\n
-[Install]
-WantedBy=${service_wanted_by}"
-
-    if echo -e "${service_content}" > "${service_path}"; then
-        if service_daemon_reload; then
-            print_success "Service created: ${service_path}"
-            print_info "Service configuration:"
-            print_info "  • Type: ${service_type}"
-            print_info "  • Executable: ${service_exec_start}"
-            print_info "  • User: ${service_user:-root}"
-            print_info "  • Group: ${service_group:-${service_user:-root}}"
-            print_info "  • Restart: ${service_restart}"
-        else
-            print_warning "Service created, failed to reload systemd daemon"
-            return 1
-        fi
+    if service_daemon_reload; then
+        print_success "Systemd units successfully deployed."
         return 0
     else
-        print_error "Failed to create service file"
+        print_warning "Failed to reload systemd daemon."
         return 1
     fi
 }

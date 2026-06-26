@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/modules/python.sh - Python virtual environment management
+# lib/modules/python.sh
 #
 # DynDNS
 #
@@ -72,11 +72,13 @@ install_python_dependencies() {
     print_info "Installing Python dependencies..."
 
     if [[ -f "${requirements_file}" ]]; then
+        # Fast offline check - verify all packages are already installed
         if pip install --no-index --no-deps -r "${requirements_file}" -q 2>/dev/null; then
             print_success "All required packages installed"
             return 0
         fi
 
+        # Packages missing - need network install
         if pip install --upgrade -r "${requirements_file}" -q; then
             print_success "All required packages installed"
             return 0
@@ -208,7 +210,7 @@ start_python_application() {
         sleep "${init_delay}"
 
         if kill -0 "${python_pid}" 2>/dev/null; then
-            print_success "Application started successfully"
+            # print_success "Application started successfully"
             return 0
         else
             print_error "Application failed to start"
@@ -230,6 +232,9 @@ start_python_application() {
     fi
 }
 
+# Usage: start_python_cli "config"
+#        start_python_cli "import" "config.yaml"
+#        start_python_cli "export" "--output" "backup.yaml"
 start_python_cli() {
     local enable_python="${ENABLE_PYTHON:-0}"
     local python_script="${PYTHON_SCRIPT:-"${BIN_DIR}/${SOFTWARE_DIR_NAME}.py"}"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/core/config.sh - Configuration variables and paths
+# lib/core/config.sh
 #
 # DynDNS
 #
@@ -13,13 +13,13 @@
 ################################################################################
 
 readonly AUTHOR="Manuel Ziel"
-readonly VERSION="1.0.3-alpha05"
-readonly LAST_MODIFIED="2026-06-21"
+readonly VERSION="1.0.3-alpha.6"
+readonly LAST_MODIFIED="2026-06-26"
 readonly SOFTWARE_NAME="DynDNS"
 readonly SOFTWARE_DESCRIPTION="Dynamic DNS Client for IONOS"
 
 # Generate directory-safe name from SOFTWARE_NAME and export for sourced modules
-readonly SOFTWARE_DIR_NAME=$(echo "${SOFTWARE_NAME,,}" | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
+readonly SOFTWARE_DIR_NAME="$(echo "${SOFTWARE_NAME,,}" | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')"
 export SOFTWARE_DIR_NAME  # Export for modules that need it
 
 # Systemd journal identifier (for consistent logging across Python and Bash)
@@ -99,6 +99,7 @@ readonly SERVICE_RESTART="always"                                       # no, on
 readonly SERVICE_RESTART_SEC="5"                                        # Seconds to wait before restart
 readonly SERVICE_AFTER="network-online.target"                          # Dependencies (space-separated)
 readonly SERVICE_WANTS="network-online.target"                          # Optional dependencies (space-separated) 
+readonly SERVICE_PART_OF=""                                             # Bind to a target (e.g. for multi-service apps)
 readonly SERVICE_WANTED_BY="multi-user.target"                          # Install target
 
 # Timeouts (seconds; empty string = systemd default)
@@ -120,24 +121,36 @@ readonly SERVICE_PRIVATE_TMP="true"                                     # Per-se
 readonly SERVICE_PROTECT_SYSTEM="full"                                  # full = /usr/boot/efi read-only, /var writable (venv lives there)
 readonly SERVICE_PROTECT_HOME=""                                        # Empty = off; "true" blocks /home
 readonly SERVICE_RESTART_PREVENT_EXIT_STATUS="0"                        # Exit codes that must NOT trigger Restart= (space-separated)
+readonly SERVICE_ENVIRONMENT=""                                         # Custom environment variables (e.g. "DISPLAY=:0")
+readonly SERVICE_READ_WRITE_PATHS=""                                    # Additional static paths for ReadWritePaths= (space-separated)
 
-# Data directory permissions for user-configured paths (source_dir, target_dir, ...)
-# read from the application config file at install time.
+# Data directory permissions for paths read from the application config
+# file (listed in DATA_DIR_CONFIG_KEYS). Applied on install/update and
+# whitelisted via ReadWritePaths= in the systemd unit.
 #   "2775" = group-writable, SGID (files inherit group)      — shared group
 #   "2777" = world-writable, SGID                            — NFS, any UID
 #   "3777" = world-writable + sticky (only owner/root deletes) — safer shared
-readonly DATA_DIR_MODE="2775"                                           # Group-writable, SGID for shared group access
+readonly DATA_DIR_MODE="2775"                                           # Default: shared group access
 
-# Space-separated TOML/INI keys whose values are filesystem paths. These
-# directories are pre-created on install (chown SERVICE_USER:SERVICE_GROUP,
-# chmod DATA_DIR_MODE). Empty = feature disabled.
-readonly DATA_DIR_CONFIG_KEYS=""
+# Space-separated list of TOML/INI keys whose values are filesystem paths.
+# These directories are pre-created on install (chown SERVICE_USER:SERVICE_GROUP,
+# chmod DATA_DIR_MODE) and added to the systemd unit as -ReadWritePaths=
+# (leading '-' tolerates missing paths at runtime, avoiding 226/NAMESPACE).
+# Leave empty to disable the whole feature.
+readonly DATA_DIR_CONFIG_KEYS=""                                        # e.g. "source_dir target_dir temp_dir"
 
 # Examples for different service types:
 # Web service with database dependency:
 # readonly SERVICE_AFTER="network.target postgresql.service"
 # readonly SERVICE_WANTS="postgresql.service"
 # readonly SERVICE_USER="www-data"
+
+# Dedicated system user with shared media group (recommended for file servers):
+# readonly SERVICE_USER="myapp"
+# readonly SERVICE_GROUP="media"
+# readonly SERVICE_CREATE_USER=true
+# readonly SERVICE_UMASK="0002"
+# readonly SERVICE_SUPPLEMENTARY_GROUPS=""
 
 # Python daemon (default - uses exec to replace shell with Python):
 # readonly SERVICE_TYPE="simple" 
@@ -157,7 +170,7 @@ readonly DATA_DIR="${HOME}/.local/share/${SOFTWARE_DIR_NAME}"
 readonly SLOTS_FILE="${CONFIG_DIR}/slots.conf"
 
 # Current user
-readonly CURRENT_USER=$(whoami)
+readonly CURRENT_USER="$(whoami)"
 
 # Environment directory (calculated from config.sh location)
 # Go up two levels: lib/core/config.sh -> lib/core -> lib -> project_root
@@ -198,7 +211,7 @@ declare -A DEPENDENCIES=(
 
 # Feature flags - set to 1 to enable optional dependency groups
 readonly ENABLE_PYTHON=1
-readonly ENABLE_OPTIONAL_DEPENDENCY=0  # --- IGNORE ---
+readonly ENABLE_OPTIONAL_DEPENDENCY=0
 
 # Add optional dependencies based on feature flags
 if [[ ${ENABLE_PYTHON} -eq 1 ]]; then

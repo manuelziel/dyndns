@@ -1,7 +1,6 @@
 #!/bin/bash
 #
-# DynDNS Setup Script
-# Installation and management for DynDNS Dynamic DNS Client for IONOS
+# DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
@@ -32,7 +31,7 @@ source "${_DIR}/lib/setup/install.sh"
 source "${_DIR}/lib/setup/menu.sh"
 
 # Load optional modules based on configuration
-if [[ "${ENABLE_PYTHON:-0}" -eq 1 ]]; then
+if [[ ${ENABLE_PYTHON:-0} -eq 1 ]]; then
     source "${_DIR}/lib/modules/python.sh"
 fi
 
@@ -120,9 +119,9 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-            version|--version|-v)
+            help|--help|-h)
                 if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="version"
+                    ACTION="help"
                     shift
                 else
                     print_error "Multiple actions specified: $ACTION and $1"
@@ -130,9 +129,9 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-             help|--help|-h)
+            version|--version|-v)
                 if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="help"
+                    ACTION="version"
                     shift
                 else
                     print_error "Multiple actions specified: $ACTION and $1"
@@ -232,11 +231,11 @@ main() {
         status)
             show_status
             ;;
-        version)
-            show_version
-            ;;
         help)
             show_help
+            ;;
+        version)
+            show_version
             ;;
         interactive)
             show_interactive_menu

@@ -189,7 +189,7 @@ parse_arguments() {
 
     # Handle default action based on flags
     if [[ -z "${ACTION:-}" ]]; then
-        if [[ $DAEMON_MODE -eq 1 ]]; then
+        if [[ "$DAEMON_MODE" -eq 1 ]]; then
             ACTION="start"
         else
             ACTION="interactive"
@@ -221,7 +221,7 @@ main() {
 
     case "$ACTION" in
         start)
-            if [[ $DAEMON_MODE -eq 1 ]]; then
+            if [[ "$DAEMON_MODE" -eq 1 ]]; then
                 start_daemon "${PYTHON_ARGS[@]}"
             else
                 start_application "${PYTHON_ARGS[@]}"

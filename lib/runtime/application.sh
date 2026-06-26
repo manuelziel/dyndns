@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/runtime/application.sh - Application control functions
+# lib/runtime/application.sh
 #
 # DynDNS
 #
@@ -92,6 +92,8 @@ stop_application() {
 
     print_info "Stopping ${software_name}..."
 
+    # Prefer systemd when it owns the lifecycle; direct kill would leave
+    # the unit in a failed state and trigger auto-restart.
     if should_delegate_to_systemctl; then
         print_info "Delegating to systemd: systemctl stop ${service_name}"
         service_stop
@@ -154,6 +156,9 @@ restart_application() {
     local restart_delay=2
 
     print_info "Restarting ${software_name}..."
+
+    # stop_application and start_application already delegate to systemctl
+    # when appropriate; no need to duplicate the branch here.
     stop_application
     sleep "${restart_delay}"
 

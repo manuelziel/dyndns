@@ -44,12 +44,9 @@ from ..utils.colors import LOG_COLORS, LOG_SYMBOLS
 from .exceptions import ConfigError
 
 # Import syslog identifier for consistent logging
-try:
-    __syslog_identifier__ = os.environ.get('SYSLOG_IDENTIFIER')
-    if not __syslog_identifier__:
-        from src import __syslog_identifier__
-except ImportError:
-    sys.stderr.write("Warning: SYSLOG_IDENTIFIER not found in environment or package metadata.\n")
+from .constants import AppSettings, LoggingDefaults
+
+__syslog_identifier__ = os.environ.get('SYSLOG_IDENTIFIER') or AppSettings.SYSLOG_IDENTIFIER
 
 
 ################################################################################
@@ -294,8 +291,7 @@ class LoggerManager:
 ################################################################################
 
 # Add SUCCESS log level
-SUCCESS_LEVEL = 25  # Between INFO (20) and WARNING (30)
-logging.addLevelName(SUCCESS_LEVEL, 'SUCCESS')
+logging.addLevelName(LoggingDefaults.SUCCESS_LEVEL, 'SUCCESS')
 
 def success(self, message: str, *args: Any, **kwargs: Any) -> None:
     """Log a success message at SUCCESS level (25).
@@ -308,8 +304,8 @@ def success(self, message: str, *args: Any, **kwargs: Any) -> None:
         *args: Additional positional arguments for string formatting.
         **kwargs: Additional keyword arguments passed to _log().
     """
-    if self.isEnabledFor(SUCCESS_LEVEL):
-        self._log(SUCCESS_LEVEL, message, args, **kwargs)
+    if self.isEnabledFor(LoggingDefaults.SUCCESS_LEVEL):
+        self._log(LoggingDefaults.SUCCESS_LEVEL, message, args, **kwargs)
 
 # Add success method to Logger class
 logging.Logger.success = success

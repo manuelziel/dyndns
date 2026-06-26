@@ -1,11 +1,9 @@
 #!/bin/bash
-# lib/setup/system.sh - System utilities and checks
+# lib/setup/system.sh
 #
-# [SOFTWARE_NAME] Setup Script
-# Setup script for [SOFTWARE_DESCRIPTION]
+# # DynDNS
 #
-# Created: [CREATION_DATE]
-# Author: [AUTHOR]
+# Author: Manuel Ziel
 # License: MIT
 #
 # This program is free software: you can redistribute it and/or modify

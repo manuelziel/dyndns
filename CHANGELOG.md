@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.3-alpha.6] - 2026-06-26
+### Changed
+- Relocate `config.toml` path from `/usr/local/share/dyndns` to `/etc/dyndns/config.toml` for strict FHS compliance
+- Replace dynamic Python systemd unit generation with static Bash template substitution (`template.service`)
+
 ## [1.0.3-alpha05] - 2026-06-18
 ### Added
 - Dedicated service user/group with systemd hardening

@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/setup/menu.sh - Interactive menu functions
+# lib/setup/menu.sh
 #
 # DynDNS
 #

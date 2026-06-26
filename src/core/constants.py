@@ -36,7 +36,7 @@ class AppSettings:
         SOFTWARE_NAME: Name of the application.
         SYSLOG_IDENTIFIER: Systemd syslog identifier.
     """
-    VERSION = "1.0.3-alpha05"
+    VERSION = "1.0.3-alpha.6"
     AUTHOR = "Manuel Ziel"
     EMAIL = "manuelziel@gmail.com"
     DESCRIPTION = "Dynamic DNS Client"
@@ -342,6 +342,17 @@ class DNSDefaults:
 
 
 ################################################################################
+# LOGGING SETTINGS - Default Logging Configuration
+################################################################################
+
+class LoggingDefaults:
+    """Namespace for default logging configuration."""
+    LEVEL = "INFO"
+    CONSOLE_COLORS = True
+    SUCCESS_LEVEL = 25
+
+
+################################################################################
 # DAEMON SETTINGS - Default Daemon Configuration
 ################################################################################
 
@@ -393,6 +404,8 @@ class NetworkAPI:
     """Namespace for IP detection service defaults."""
     IPV4_URL = "https://api.ipify.org"
     IPV6_URL = "https://api6.ipify.org"
+    IPV4_ENABLED = True
+    IPV6_ENABLED = True
     TIMEOUT = 10  # seconds
     RETRY_ATTEMPTS = 3
     RETRY_DELAY = 2  # seconds

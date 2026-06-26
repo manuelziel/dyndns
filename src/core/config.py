@@ -26,7 +26,14 @@ from typing import Dict, Any, Optional
 # Local Imports
 from .exceptions import ConfigError
 from .database import Database
-from .constants import AppPaths, ProviderAPI, NetworkAPI, DNSDefaults, DaemonDefaults
+from .constants import (
+    AppPaths,
+    ProviderAPI,
+    NetworkAPI,
+    DaemonDefaults,
+    DNSDefaults,
+    LoggingDefaults
+)
 
 
 ################################################################################
@@ -122,8 +129,8 @@ class ConfigManager:
 
     def _load_debug_config(self) -> None:
         """Load debug configuration settings from TOML."""
-        self.log_level = self.config.get("debug", {}).get("level", "INFO")
-        self.console_colors = self.config.get("debug", {}).get("console_colors", True)
+        self.log_level = self.config.get("debug", {}).get("level", LoggingDefaults.LEVEL)
+        self.console_colors = self.config.get("debug", {}).get("console_colors", LoggingDefaults.CONSOLE_COLORS)
 
 
     def _load_api_config(self) -> None:
@@ -135,8 +142,8 @@ class ConfigManager:
 
     def _load_network_config(self) -> None:
         """Load network configuration settings from TOML."""
-        self.network_ipv4_enabled = self.config.get("network", {}).get("ipv4_enabled", True)
-        self.network_ipv6_enabled = self.config.get("network", {}).get("ipv6_enabled", True)
+        self.network_ipv4_enabled = self.config.get("network", {}).get("ipv4_enabled", NetworkAPI.IPV4_ENABLED)
+        self.network_ipv6_enabled = self.config.get("network", {}).get("ipv6_enabled", NetworkAPI.IPV6_ENABLED)
         self.network_ipv4_detection_url = self.config.get("network", {}).get("ipv4_detection_url", NetworkAPI.IPV4_URL)
         self.network_ipv6_detection_url = self.config.get("network", {}).get("ipv6_detection_url", NetworkAPI.IPV6_URL)
         self.network_timeout = self.config.get("network", {}).get("timeout", NetworkAPI.TIMEOUT)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/runtime/menu.sh - Interactive menu functions
+# lib/runtime/menu.sh
 #
 # DynDNS
 #
@@ -54,7 +54,7 @@ show_interactive_menu() {
         option_actions+=("configure_application")
         ((option_num++))
 
-        options+=("${option_num}) Show Status")
+        options+=("${option_num}) Status")
         option_actions+=("show_status")
         ((option_num++))
 
@@ -62,8 +62,10 @@ show_interactive_menu() {
         option_actions+=("help")
         ((option_num++))
 
+        # Store max choice number (last option number)
         local max_choice=$((option_num - 1))
 
+        # Add Exit as option 0
         options+=("0) Exit")
         option_actions+=("exit")
 
@@ -161,8 +163,8 @@ show_help() {
     echo "  --interactive, -i                # Force interactive mode"
     echo "  --daemon, -d                     # Run in daemon mode (for start action)"
     echo "  --quiet, -q                      # Quiet mode (suppress output)"
-    echo "  --version, -v                    # Show version information"
     echo "  --help, -h                       # Show this help"
+    echo "  --version, -v                    # Show version information"
     echo ""
     echo "Examples:"
     echo "  ${cmd_name} start                # Start ${software_name}"
