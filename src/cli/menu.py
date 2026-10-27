@@ -16,17 +16,15 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 from abc import ABC, abstractmethod
 
-# Local Imports
 from ..core.exceptions import DatabaseError
 from ..utils.colors import Colors
 from .helpers.output import (
-    print_section, print_error, print_success, print_info,
+    print_section, print_error, print_success,
     clear_screen
 )
 from .helpers.input import (
@@ -172,31 +170,25 @@ class ConfigMenu(ABC):
             return
 
         print_section("Import Configuration")
-        
         file_path = safe_input("\nEnter file path to import: ").strip()
         if not file_path:
             print_error("No file specified.")
             wait_for_enter()
             return
-        
         if not is_valid_file_path(file_path, must_exist=True):
             print_error(f"File not found or invalid: {file_path}")
             wait_for_enter()
             return
-            
+
         file_path = resolve_path(file_path)
-        
         overwrite = confirm_action("Overwrite existing data?", default=False)
-        
         print(f"\nImporting from {file_path}...")
         importer = self.importer_class(self.config, self.logger)
         result = importer.import_from_file(file_path, overwrite=overwrite)
-        
         if result == 0:
             print_success("Import completed successfully!")
         else:
             print_error("Import failed. Check logs for details.")
-        
         wait_for_enter()
 
 
@@ -210,47 +202,59 @@ class ConfigMenu(ABC):
             wait_for_enter()
             return
 
-        print_section("Export Configuration")
-        print()
-        
-        timestamp = datetime.now().strftime(CLIConfig.TIMESTAMP_FORMAT)
-        default_filename = f"config-export_{timestamp}{ExportFormat.EXT_YAML}"
-        default_path = os.path.expanduser(f"~/{default_filename}")
-        
-        print(f"{Colors.DIM}Default location:{Colors.NC} {Colors.CYAN}{default_path}{Colors.NC}")
-        print()
-        print(f"{Colors.DIM}Options:{Colors.NC}")
-        print(f"{Colors.DIM}  • Press Enter: Use default location{Colors.NC}")
-        print(f"{Colors.DIM}  • Enter custom path: {Colors.CYAN}/path/to/your/config{ExportFormat.EXT_YAML}{Colors.NC}")
-        print()
-        
-        output_file = safe_input(f"Output file path [default: {default_filename}]: ").strip()
-        
+        output_file = self._prompt_export_path()
         if not output_file:
-            output_file = default_path
-        else:
-            if not is_valid_file_path(output_file, must_exist=False):
-                print_error(f"Target path is invalid or directory not writable: {output_file}")
-                wait_for_enter()
-                return
-            output_file = resolve_path(output_file)
-        
-        file_ext = os.path.splitext(output_file)[1].lower()
-        if file_ext in [ExportFormat.EXT_YAML, ExportFormat.EXT_YML]:
-            format_type = ExportFormat.YAML
-        elif file_ext == ExportFormat.EXT_JSON:
-            format_type = ExportFormat.JSON
-        else:
-            format_choice = safe_input(f"Format ({ExportFormat.YAML}/{ExportFormat.JSON}) [{ExportFormat.YAML}]: ").strip().lower()
-            format_type = format_choice if format_choice in [ExportFormat.YAML, ExportFormat.JSON] else ExportFormat.YAML
-        
-        print(f"\nExporting configuration...")
+            return
+
+        format_type = self._resolve_export_format(output_file)
+        print("\nExporting configuration...")
         exporter = self.exporter_class(self.config, self.logger)
         result = exporter.export_to_file(output_file, format_type=format_type)
-        
         if result == 0:
             print_success(f"Configuration exported to: {output_file}")
         else:
             print_error("Export failed. Check logs for details.")
-        
         wait_for_enter()
+
+
+    def _prompt_export_path(self) -> Optional[str]:
+        """Prompt user for configuration export file path.
+
+        Returns:
+            Resolved output file path string or None if invalid.
+        """
+        print_section("Export Configuration")
+        timestamp = datetime.now().strftime(CLIConfig.TIMESTAMP_FORMAT)
+        default_filename = f"config-export_{timestamp}{ExportFormat.EXT_YAML}"
+        default_path = os.path.expanduser(f"~/{default_filename}")
+        print(f"\n{Colors.DIM}Default location:{Colors.NC} {Colors.CYAN}{default_path}{Colors.NC}\n")
+        print(f"{Colors.DIM}Options:{Colors.NC}")
+        print(f"{Colors.DIM}  • Press Enter: Use default location{Colors.NC}")
+        print(f"{Colors.DIM}  • Enter custom path: {Colors.CYAN}/path/to/your/config{ExportFormat.EXT_YAML}{Colors.NC}\n")
+
+        output_file = safe_input(f"Output file path [default: {default_filename}]: ").strip()
+        if not output_file:
+            return default_path
+        if not is_valid_file_path(output_file, must_exist=False):
+            print_error(f"Target path is invalid or directory not writable: {output_file}")
+            wait_for_enter()
+            return None
+        return resolve_path(output_file)
+
+
+    def _resolve_export_format(self, output_file: str) -> str:
+        """Determine export format from file extension or user prompt.
+
+        Args:
+            output_file: Target file path.
+
+        Returns:
+            Export format identifier (`yaml` or `json`).
+        """
+        file_ext = os.path.splitext(output_file)[1].lower()
+        if file_ext in [ExportFormat.EXT_YAML, ExportFormat.EXT_YML]:
+            return ExportFormat.YAML
+        if file_ext == ExportFormat.EXT_JSON:
+            return ExportFormat.JSON
+        choice = safe_input(f"Format ({ExportFormat.YAML}/{ExportFormat.JSON}) [{ExportFormat.YAML}]: ").strip().lower()
+        return choice if choice in [ExportFormat.YAML, ExportFormat.JSON] else ExportFormat.YAML

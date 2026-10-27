@@ -5,9 +5,14 @@ db.db-wal
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 
-# Encryption key
+# Cryptographic Keys & Secrets (NEVER commit!)
 .encryption_key
+keys/
+*.pem
+*.key
 
 # Environment Variables
 .env
@@ -21,13 +26,15 @@ __pycache__/
 
 # Virtual environments
 venv/
+.venv/
 env/
 ENV/
 
-# IDE
-.agents/
+# IDE & Agents
 .vscode/
 .idea/
+.agents/
+.continue/
 *.swp
 *.swo
 .*.swp

@@ -12,14 +12,12 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import getpass
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-# Local Imports
 from src.core.exceptions import DatabaseError, DynDNSException, NetworkError
-from src.core.constants import Subdomain, PlaceholderIP, RecordType
+from src.core.constants import Subdomain, RecordType
 from src.cli.constants import ZoneMenuChoices, EditZoneMenuChoices, SetupMenuChoices, CLIConfig, MenuLabels
 from src.core import SyncStatus
 from src.network import NetworkData
@@ -144,12 +142,16 @@ class ZoneManager:
         self._print_edit_options()
         choice = safe_input("Enter your choice (0-3): ").strip()
 
-        if choice == EditZoneMenuChoices.CHANGE_API_KEY:
-            self._update_zone_api_key(zone)
-        elif choice == EditZoneMenuChoices.CHANGE_SECRET:
-            self._update_zone_secret(zone)
-        elif choice == EditZoneMenuChoices.TOGGLE_IPV4_V6:
+        if choice == EditZoneMenuChoices.UPDATE_ZONE_ID:
+            self._edit_zone_id(zone)
+        elif choice == EditZoneMenuChoices.UPDATE_CREDENTIALS:
+            self._edit_zone_credentials(zone)
+        elif choice == EditZoneMenuChoices.TOGGLE_STATUS:
             self._toggle_zone_status(zone)
+        elif choice == EditZoneMenuChoices.EXIT:
+            print_info("Cancelled.")
+        else:
+            print_error("Invalid choice!")
 
         wait_for_enter()
 
@@ -177,7 +179,7 @@ class ZoneManager:
         try:
             self.db.delete_zone(zone['id'])
             print_success(f"Zone '{zone['zone_name']}' deleted successfully!")
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, DatabaseError) as e:
             print_error(f"Error deleting zone: {e}")
             self.logger.error(f"Failed to delete zone {zone['id']}: {e}")
         wait_for_enter()
@@ -241,6 +243,10 @@ class ZoneManager:
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
 
+        update_url = dyndns.get('update_url')
+        if update_url:
+            print(f"    Update URL: {Colors.DIM}{update_url}{Colors.NC}")
+
 
     def _prompt_and_create_zone(self, zone_name: str) -> None:
         """Prompt for credentials, confirm, and insert the new zone.
@@ -277,7 +283,7 @@ class ZoneManager:
         print(f"{Colors.BOLD}Zone Name:{Colors.NC}     {zone_name}")
         print(f"{Colors.BOLD}Zone ID:{Colors.NC}       {provider_zone_id if provider_zone_id else Colors.DIM + '(auto-fetch)' + Colors.NC}")
         print(f"{Colors.BOLD}Bulk ID:{Colors.NC}       {bulk_id}")
-        print(f"{Colors.BOLD}API Key:{Colors.NC}       {Colors.DIM}{'*' * min(len(api_key), 64)} ({len(api_key)} chars, will be encrypted){Colors.NC}")
+        print(f"{Colors.BOLD}API Key:{Colors.NC}       {Colors.DIM}{'*' * min(len(api_key), CLIConfig.MAX_MASK_LENGTH)} ({len(api_key)} chars, will be encrypted){Colors.NC}")
 
         if not confirm_action("Proceed with zone creation?", default=False):
             print_info("Cancelled.")
@@ -375,10 +381,10 @@ class ZoneManager:
         self._print_record_setup_menu(zone_name)
 
         choice = safe_input("Enter your choice (0-2): ").strip()
-        if choice == ZoneMenuChoices.EXIT:
+        if choice == SetupMenuChoices.SKIP:
             print_info("You can add records later via 'Records' > 'Add record'")
             return
-        if choice not in ['1', '2']:
+        if choice not in (SetupMenuChoices.STANDARD, SetupMenuChoices.ROOT_ONLY):
             print_warning("Invalid choice. Skipping record creation.")
             return
 
@@ -656,9 +662,9 @@ class ZoneManager:
         print(f"\n{Colors.BOLD}What to edit?{Colors.NC}")
         print()
         print(f"{Colors.BLUE}Available options:{Colors.NC}")
-        print(f"  {EditZoneMenuChoices.CHANGE_API_KEY}) {MenuLabels.EDIT_ZONE_MENU[EditZoneMenuChoices.CHANGE_API_KEY]}")
-        print(f"  {EditZoneMenuChoices.CHANGE_SECRET}) {MenuLabels.EDIT_ZONE_MENU[EditZoneMenuChoices.CHANGE_SECRET]}")
-        print(f"  {EditZoneMenuChoices.TOGGLE_IPV4_V6}) {MenuLabels.EDIT_ZONE_MENU[EditZoneMenuChoices.TOGGLE_IPV4_V6]}")
+        print(f"  {EditZoneMenuChoices.UPDATE_ZONE_ID}) {MenuLabels.EDIT_ZONE_MENU[EditZoneMenuChoices.UPDATE_ZONE_ID]}")
+        print(f"  {EditZoneMenuChoices.UPDATE_CREDENTIALS}) {MenuLabels.EDIT_ZONE_MENU[EditZoneMenuChoices.UPDATE_CREDENTIALS]}")
+        print(f"  {EditZoneMenuChoices.TOGGLE_STATUS}) {MenuLabels.EDIT_ZONE_MENU[EditZoneMenuChoices.TOGGLE_STATUS]}")
         print(f"  {EditZoneMenuChoices.EXIT}) Cancel")
         print()
 
@@ -669,10 +675,18 @@ class ZoneManager:
         Args:
             zone: Zone dictionary.
         """
-        new_provider_id = safe_input(f"New Zone ID [{zone.get('provider_zone_id', '')}]: ").strip()
-        if new_provider_id:
+        current_id = zone.get('provider_zone_id') or 'N/A'
+        new_provider_id = safe_input(f"New Zone ID [{current_id}]: ").strip()
+        if not new_provider_id:
+            print_info("No change.")
+            return
+
+        try:
             self.db.update_zone(zone['id'], provider_zone_id=new_provider_id)
             print_success("Zone ID updated")
+        except DatabaseError as e:
+            print_error(f"Error updating zone ID: {e}")
+            self.logger.error(f"Failed to update zone ID for zone {zone['id']}: {e}")
 
 
     def _edit_zone_credentials(self, zone: Dict[str, Any]) -> None:
@@ -682,19 +696,32 @@ class ZoneManager:
             zone: Zone dictionary.
         """
         print_subsection("Update API Credentials")
-        bulk_id = safe_input("New Bulk ID: ").strip()
+        existing = self.db.get_dyndns_config_by_zone(zone['id'])
+        current_bulk_id = existing.get('bulk_id') if existing else None
+        bulk_prompt = f"New Bulk ID [{current_bulk_id}]: " if current_bulk_id else "New Bulk ID: "
+        bulk_id = safe_input(bulk_prompt).strip() or (current_bulk_id or "")
 
         print(f"{Colors.DIM}Paste your new API Key (input hidden, press Enter when done){Colors.NC}")
         api_key = getpass.getpass("New API Key: ")
-
         if api_key:
             print_success(f"API Key received ({len(api_key)} characters)")
         else:
             print_warning("No API Key entered")
+        if not bulk_id or not api_key:
+            print_error("Both Bulk ID and API Key are required!")
+            return
 
-        if bulk_id and api_key:
-            self.db.set_dyndns_config(zone_id=zone['id'], bulk_id=bulk_id, api_key=api_key)
+        try:
+            self.db.set_dyndns_config(
+                zone_id=zone['id'], bulk_id=bulk_id, api_key=api_key,
+                update_url=existing.get('update_url') if existing else None,
+                description=existing.get('description') if existing else None,
+                domains=existing.get('domains') if existing else None,
+            )
             print_success("API credentials updated")
+        except DynDNSException as e:
+            print_error(f"Error updating credentials: {e}")
+            self.logger.error(f"Failed to update credentials for zone {zone['id']}: {e}")
 
 
     def _toggle_zone_status(self, zone: Dict[str, Any]) -> None:
@@ -704,6 +731,10 @@ class ZoneManager:
             zone: Zone dictionary.
         """
         new_status = not zone['enabled']
-        self.db.update_zone_status(zone['id'], new_status)
-        status_text = "enabled" if new_status else "disabled"
-        print_success(f"Zone {status_text}")
+        try:
+            self.db.update_zone_status(zone['id'], new_status)
+            status_text = "enabled" if new_status else "disabled"
+            print_success(f"Zone {status_text}")
+        except DatabaseError as e:
+            print_error(f"Error updating zone status: {e}")
+            self.logger.error(f"Failed to update status for zone {zone['id']}: {e}")

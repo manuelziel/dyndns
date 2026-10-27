@@ -16,13 +16,11 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import requests
 import time
 import logging
 from typing import Optional, Tuple, Dict, Any
 
-# Local Imports
 from src.core.constants import HTTPStatus, NetworkAPI
 
 ################################################################################
@@ -73,9 +71,9 @@ class NetworkData:
         self.retry_attempts = config.network_retry_attempts
 
 
-    ################################################################################
+    ############################################################################
     # IP ADDRESS DETECTION - Public IP Retrieval
-    ################################################################################
+    ############################################################################
     
     def load_current_ip_addresses(self) -> Tuple[Optional[str], Optional[str]]:
         """Load current public IP addresses from detection services.
@@ -105,29 +103,9 @@ class NetworkData:
         Returns:
             IPv4 address string if successful, None if all attempts failed.
         """
-        retries = retries if retries is not None else self.retry_attempts
-        timeout = timeout if timeout is not None else self.timeout
-        
-        for attempt in range(retries):
-            try:
-                response = requests.get(self.ipv4_detection_url, timeout=timeout)
-                if response.status_code == HTTPStatus.OK and response.text:
-                    ipv4_address = response.text.strip()
-                    self.logger.debug(f"IPv4 address detected: {ipv4_address}")
-                    return ipv4_address
-                else:
-                    self.logger.warning(f"Invalid IPv4 response: {response.status_code}")
-                    
-            except requests.exceptions.Timeout:
-                self.logger.warning(f"IPv4 detection timeout (attempt {attempt + 1}/{retries})")
-            except requests.exceptions.RequestException as e:
-                self.logger.warning(f"IPv4 detection error (attempt {attempt + 1}/{retries}): {e}")
-                
-            if attempt < retries - 1:
-                time.sleep(NetworkAPI.RETRY_DELAY)
-                
-        self.logger.error("Failed to fetch IPv4 address after multiple attempts")
-        return None
+        return self._fetch_public_ip(
+            self.ipv4_detection_url, "IPv4", retries=retries, timeout=timeout
+        )
 
 
     def get_current_public_ipv6_address(self, retries: Optional[int] = None, timeout: Optional[int] = None) -> Optional[str]:
@@ -140,34 +118,55 @@ class NetworkData:
         Returns:
             IPv6 address string if successful, None if all attempts failed.
         """
+        return self._fetch_public_ip(
+            self.ipv6_detection_url, "IPv6", retries=retries, timeout=timeout
+        )
+
+
+    def _fetch_public_ip(
+        self,
+        url: str,
+        protocol: str,
+        retries: Optional[int] = None,
+        timeout: Optional[int] = None,
+    ) -> Optional[str]:
+        """Fetch public IP address from detection endpoint with retry logic.
+
+        Args:
+            url: Detection service endpoint URL.
+            protocol: Protocol label for logging ('IPv4' or 'IPv6').
+            retries: Number of retry attempts, defaults to config value.
+            timeout: Request timeout in seconds, defaults to config value.
+
+        Returns:
+            Detected IP address string if successful, None if all attempts failed.
+        """
         retries = retries if retries is not None else self.retry_attempts
         timeout = timeout if timeout is not None else self.timeout
-        
+
         for attempt in range(retries):
             try:
-                response = requests.get(self.ipv6_detection_url, timeout=timeout)
+                response = requests.get(url, timeout=timeout)
                 if response.status_code == HTTPStatus.OK and response.text:
-                    ipv6_address = response.text.strip()
-                    self.logger.debug(f"IPv6 address detected: {ipv6_address}")
-                    return ipv6_address
-                else:
-                    self.logger.warning(f"Invalid IPv6 response: {response.status_code}")
-                    
+                    ip_address = response.text.strip()
+                    self.logger.debug(f"{protocol} address detected: {ip_address}")
+                    return ip_address
+                self.logger.warning(f"Invalid {protocol} response: {response.status_code}")
             except requests.exceptions.Timeout:
-                self.logger.warning(f"IPv6 detection timeout (attempt {attempt + 1}/{retries})")
+                self.logger.warning(f"{protocol} detection timeout (attempt {attempt + 1}/{retries})")
             except requests.exceptions.RequestException as e:
-                self.logger.warning(f"IPv6 detection error (attempt {attempt + 1}/{retries}): {e}")
-                
+                self.logger.warning(f"{protocol} detection error (attempt {attempt + 1}/{retries}): {e}")
+
             if attempt < retries - 1:
                 time.sleep(NetworkAPI.RETRY_DELAY)
-                
-        self.logger.error("Failed to fetch IPv6 address after multiple attempts")
+
+        self.logger.error(f"Failed to fetch {protocol} address after multiple attempts")
         return None
 
 
-    ################################################################################
+    ############################################################################
     # STATE MANAGEMENT - IP Change Detection
-    ################################################################################
+    ############################################################################
         
     def save_current_as_last(self) -> None:
         """Save current IP addresses as last known addresses.
@@ -192,9 +191,9 @@ class NetworkData:
         }
 
 
-    ################################################################################
+    ############################################################################
     # STATUS & INFORMATION - Network Status Reporting
-    ################################################################################
+    ############################################################################
         
     def get_status(self) -> Dict[str, Any]:
         """Get current network status information.

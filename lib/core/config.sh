@@ -5,16 +5,14 @@
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # CONFIGURATION
 ################################################################################
 
 readonly AUTHOR="Manuel Ziel"
-readonly VERSION="1.0.3-alpha.6"
-readonly LAST_MODIFIED="2026-06-26"
+readonly VERSION="1.0.3-alpha.8"
+readonly LAST_MODIFIED="2026-10-26"
 readonly SOFTWARE_NAME="DynDNS"
 readonly SOFTWARE_DESCRIPTION="Dynamic DNS Client for IONOS"
 
@@ -177,7 +175,7 @@ readonly CURRENT_USER="$(whoami)"
 readonly ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # Compatibility
-readonly INSTALL_PATH="${MAIN_EXECUTABLE}"  # Used by is_installed(), backup, uninstall, menu
+readonly INSTALL_PATH="${MAIN_EXECUTABLE}"  # Used by is_installed(), uninstall, menu
 
 # System dependencies mapping: [command]="package-name"
 # - [command]: The command that must be available in PATH
@@ -214,7 +212,7 @@ readonly ENABLE_PYTHON=1
 readonly ENABLE_OPTIONAL_DEPENDENCY=0
 
 # Add optional dependencies based on feature flags
-if [[ ${ENABLE_PYTHON} -eq 1 ]]; then
+if [[ "${ENABLE_PYTHON}" -eq 1 ]]; then
     DEPENDENCIES["python3"]=1
     DEPENDENCIES["python3-pip"]=1
     DEPENDENCIES["python3-venv"]=1
@@ -223,7 +221,7 @@ if [[ ${ENABLE_PYTHON} -eq 1 ]]; then
 fi
 
 # Add other optional dependencies here. Variable used in install.sh
-if [[ ${ENABLE_OPTIONAL_DEPENDENCY} -eq 1 ]]; then
+if [[ "${ENABLE_OPTIONAL_DEPENDENCY}" -eq 1 ]]; then
     DEPENDENCIES["curl"]=1
     DEPENDENCIES["git"]=1
 fi

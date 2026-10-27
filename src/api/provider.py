@@ -12,12 +12,10 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import logging
 import time
 from typing import Any, Dict, List, Optional
 
-# Local Imports
 from src.core.exceptions import RecordNotFoundError, ZoneNotFoundError, APIError
 from src.core.constants import HTTPStatus, HTTPHeader, HTTPHeaderValue, ProviderAPI
 from .http_client import HTTPClient
@@ -76,17 +74,17 @@ class ProviderDNSClient:
         self.logger.debug("Fetching zones from provider API...")
         response = self.client.get(endpoint="/zones", headers=self.headers)
 
-        if response and response.status_code == HTTPStatus.OK:
+        if response is not None and response.status_code == HTTPStatus.OK:
             zones = response.json()
             self.logger.debug(f"Retrieved {len(zones)} zones from provider")
             return zones
-        elif response:
-            self.logger.error(
+        elif response is not None:
+            self.logger.warning(
                 f"Failed to fetch zones: {response.status_code} - {response.text}"
             )
             return None
         else:
-            self.logger.error("Failed to fetch zones: No response from provider")
+            self.logger.warning("Failed to fetch zones: No response from provider")
             return None
 
 
@@ -107,17 +105,17 @@ class ProviderDNSClient:
             endpoint=f"/zones/{zone_id}", headers=self.headers
         )
 
-        if response and response.status_code == HTTPStatus.OK:
+        if response is not None and response.status_code == HTTPStatus.OK:
             zone_data = response.json()
             records = zone_data.get("records", [])
             self.logger.debug(
                 f"Retrieved {len(records)} records for zone {zone_id}"
             )
             return records
-        elif response and response.status_code == HTTPStatus.NOT_FOUND:
+        elif response is not None and response.status_code == HTTPStatus.NOT_FOUND:
             self.logger.error(f"Zone not found: {zone_id}")
             raise ZoneNotFoundError(f"Zone {zone_id} not found")
-        elif response:
+        elif response is not None:
             self.logger.error(
                 f"Failed to fetch zone records: {response.status_code} - {response.text}"
             )
@@ -152,16 +150,11 @@ class ProviderDNSClient:
         Raises:
             RecordNotFoundError: If record not found (404).
         """
-        self.logger.debug(
-            f"Updating record {record_id} in zone {zone_id} to {content}"
-        )
-
+        self.logger.debug(f"Updating record {record_id} in zone {zone_id} to {content}")
         if ttl is None:
             ttl = self.config.dns_default_ttl
-
         json_data = {"content": content, "ttl": ttl, "disabled": disabled}
 
-        # Retry logic for transient errors (401 can be temporary)
         max_retries = ProviderAPI.AUTH_MAX_RETRIES
         for attempt in range(max_retries):
             response = self.client.put(
@@ -169,50 +162,56 @@ class ProviderDNSClient:
                 headers=self.headers,
                 json_data=json_data,
             )
-
-            if response and response.status_code == HTTPStatus.OK:
-                self.logger.debug(
-                    f"Successfully updated record {record_id} to {content}"
-                )
+            if response is not None and response.status_code == HTTPStatus.OK:
+                self.logger.debug(f"Successfully updated record {record_id} to {content}")
                 return True
-            elif response and response.status_code == HTTPStatus.UNAUTHORIZED:
-                if attempt < max_retries - 1:
-                    self.logger.warning(
-                        "Authentication failed (401) - retrying... "
-                        f"(attempt {attempt + 1}/{max_retries})"
-                    )
-                    time.sleep(ProviderAPI.AUTH_RETRY_DELAY)  # Short delay before retry
-                    continue
-                else:
-                    self.logger.error(
-                        "Authentication failed (401 Unauthorized) - check API key"
-                    )
-                    return False
-            elif response and response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
-                self.logger.error("Rate limit exceeded (429) - too many requests")
+            if not self._should_retry_update_record(response, record_id, attempt, max_retries):
                 return False
-            elif response and response.status_code == HTTPStatus.NOT_FOUND:
-                error_data = response.json() if response.text else {}
-                error_code = error_data.get("code", "UNKNOWN")
-                if error_code == ProviderAPI.ERR_RECORD_NOT_FOUND:
-                    self.logger.warning(
-                        f"Record not found: {record_id} - Provider IDs may be outdated"
-                    )
-                    raise RecordNotFoundError(
-                        f"Record {record_id} not found - re-sync required"
-                    )
-                else:
-                    self.logger.error(f"Zone or record not found: {response.text}")
-                    return False
-            elif response:
-                self.logger.error(
-                    f"Failed to update record: {response.status_code} - {response.text}"
-                )
-                return False
-            else:
-                self.logger.error("Failed to update record: No response from provider")
-                return False
+        return False
 
+
+    def _should_retry_update_record(
+        self,
+        response: Optional[Any],
+        record_id: str,
+        attempt: int,
+        max_retries: int,
+    ) -> bool:
+        """Evaluate failed record update response and determine whether to retry.
+
+        Args:
+            response: HTTP response object or None.
+            record_id: Provider record ID.
+            attempt: Current zero-based attempt index.
+            max_retries: Maximum retry attempts configured.
+
+        Returns:
+            True if caller should retry after sleeping, False to abort.
+
+        Raises:
+            RecordNotFoundError: If provider reports ERR_RECORD_NOT_FOUND (404).
+        """
+        if response is None:
+            self.logger.error("Failed to update record: No response from provider")
+            return False
+        if response.status_code == HTTPStatus.UNAUTHORIZED:
+            if attempt < max_retries - 1:
+                self.logger.warning(f"Authentication failed (401) - retrying... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(ProviderAPI.AUTH_RETRY_DELAY)
+                return True
+            self.logger.error("Authentication failed (401 Unauthorized) - check API key")
+            return False
+        if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+            self.logger.error("Rate limit exceeded (429) - too many requests")
+            return False
+        if response.status_code == HTTPStatus.NOT_FOUND:
+            error_data = response.json() if response.text else {}
+            if error_data.get("code", "UNKNOWN") == ProviderAPI.ERR_RECORD_NOT_FOUND:
+                self.logger.warning(f"Record not found: {record_id} - Provider IDs may be outdated")
+                raise RecordNotFoundError(f"Record {record_id} not found - re-sync required")
+            self.logger.error(f"Zone or record not found: {response.text}")
+            return False
+        self.logger.error(f"Failed to update record: {response.status_code} - {response.text}")
         return False
 
 
@@ -234,10 +233,10 @@ class ProviderDNSClient:
             json_data=records,
         )
 
-        if response and response.status_code == HTTPStatus.CREATED:
+        if response is not None and response.status_code == HTTPStatus.CREATED:
             self.logger.debug(f"Successfully created {len(records)} records")
             return True
-        elif response:
+        elif response is not None:
             self.logger.error(
                 f"Failed to create records: {response.status_code} - {response.text}"
             )
@@ -264,10 +263,10 @@ class ProviderDNSClient:
             headers=self.headers,
         )
 
-        if response and response.status_code == HTTPStatus.OK:
+        if response is not None and response.status_code == HTTPStatus.OK:
             self.logger.debug(f"Successfully deleted record {record_id}")
             return True
-        elif response:
+        elif response is not None:
             self.logger.error(
                 f"Failed to delete record: {response.status_code} - {response.text}"
             )
@@ -338,3 +337,178 @@ class ProviderDNSClient:
                 f"Failed to find record ID for {record_name} ({record_type}): {e}"
             )
             return None
+
+
+    ############################################################################
+    # DYNDNS API INTERFACE - Dynamic DNS Configuration & URL Updates
+    ############################################################################
+
+    def activate_dyndns(
+        self, domains: List[str], description: str = "Dynamic DNS by daemon"
+    ) -> Optional[Dict[str, Any]]:
+        """Activate Dynamic DNS for a bundle of (sub)domains.
+
+        Calls POST /v1/dyndns to obtain a bulkId and the GET updateUrl.
+
+        Args:
+            domains: List of domain or subdomain names to include.
+            description: Description for the DynDNS bundle.
+
+        Returns:
+            Dictionary with DynDNS config (bulkId, updateUrl, domains) or None on error.
+        """
+        self.logger.debug(f"Activating DynDNS for {len(domains)} domain(s)...")
+        payload = {"domains": domains, "description": description}
+        response = self.client.post(
+            endpoint="/dyndns", headers=self.headers, json_data=payload
+        )
+
+        if response is not None and response.status_code == HTTPStatus.OK:
+            data = response.json()
+            self.logger.info(
+                f"Successfully activated DynDNS (bulkId: {data.get('bulkId')})"
+            )
+            return data
+        elif response is not None:
+            self.logger.error(
+                f"Failed to activate DynDNS: {response.status_code} - {response.text}"
+            )
+            return None
+        else:
+            self.logger.error("Failed to activate DynDNS: No response from provider")
+            return None
+
+
+    def update_dyndns_config(
+        self, bulk_id: str, domains: List[str], description: str = "Dynamic DNS by daemon"
+    ) -> bool:
+        """Update existing Dynamic DNS bundle configuration.
+
+        Calls PUT /v1/dyndns/{bulkId}.
+
+        Args:
+            bulk_id: The DynDNS configuration bulk identifier.
+            domains: Updated list of domain/subdomain names.
+            description: Updated description.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        self.logger.debug(f"Updating DynDNS bundle {bulk_id}...")
+        payload = {"domains": domains, "description": description}
+        response = self.client.put(
+            endpoint=f"/dyndns/{bulk_id}", headers=self.headers, json_data=payload
+        )
+
+        if response is not None and response.status_code == HTTPStatus.OK:
+            self.logger.info(f"Successfully updated DynDNS bundle {bulk_id}")
+            return True
+        elif response is not None:
+            self.logger.error(
+                f"Failed to update DynDNS bundle {bulk_id}: {response.status_code} - {response.text}"
+            )
+            return False
+        else:
+            self.logger.error(
+                f"Failed to update DynDNS bundle {bulk_id}: No response from provider"
+            )
+            return False
+
+
+    def disable_dyndns(self) -> bool:
+        """Disable all Dynamic DNS bundles for this API key.
+
+        Calls DELETE /v1/dyndns.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        self.logger.debug("Disabling all DynDNS configurations...")
+        response = self.client.delete(endpoint="/dyndns", headers=self.headers)
+
+        if response is not None and response.status_code == HTTPStatus.OK:
+            self.logger.info("Successfully disabled all DynDNS configurations")
+            return True
+        elif response is not None:
+            self.logger.error(
+                f"Failed to disable DynDNS: {response.status_code} - {response.text}"
+            )
+            return False
+        else:
+            self.logger.error("Failed to disable DynDNS: No response from provider")
+            return False
+
+
+    def disable_dyndns_bulk(self, bulk_id: str) -> bool:
+        """Disable a specific Dynamic DNS bundle.
+
+        Calls DELETE /v1/dyndns/{bulkId}.
+
+        Args:
+            bulk_id: The DynDNS configuration bulk identifier.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        self.logger.debug(f"Disabling DynDNS bundle {bulk_id}...")
+        response = self.client.delete(
+            endpoint=f"/dyndns/{bulk_id}", headers=self.headers
+        )
+
+        if response is not None and response.status_code == HTTPStatus.OK:
+            self.logger.info(f"Successfully disabled DynDNS bundle {bulk_id}")
+            return True
+        elif response is not None:
+            self.logger.error(
+                f"Failed to disable DynDNS bundle {bulk_id}: {response.status_code} - {response.text}"
+            )
+            return False
+        else:
+            self.logger.error(
+                f"Failed to disable DynDNS bundle {bulk_id}: No response from provider"
+            )
+            return False
+
+
+    def execute_dyndns_update_url(
+        self,
+        update_url: str,
+        ipv4: Optional[str] = None,
+        ipv6: Optional[str] = None,
+    ) -> bool:
+        """Execute the native DynDNS updateUrl via HTTP GET.
+
+        The updateUrl returned by IONOS (e.g. https://ipv4.api.hosting.ionos.com/dns/v1/dyndns?q=...)
+        can be called directly. Query parameters `ipv4` and/or `ipv6` can optionally be appended
+        if specific IPs need to be set instead of auto-detecting the calling IP.
+
+        Args:
+            update_url: The full GET URL obtained from activate_dyndns.
+            ipv4: Optional explicit IPv4 address to append to query parameters.
+            ipv6: Optional explicit IPv6 address to append to query parameters.
+
+        Returns:
+            True if update request returned 200/204, False otherwise.
+        """
+        self.logger.debug(f"Executing native DynDNS update URL: {update_url}")
+        params: Dict[str, str] = {}
+        if ipv4:
+            params["ipv4"] = ipv4
+        if ipv6:
+            params["ipv6"] = ipv6
+
+        response = self.client.get(url=update_url, params=params if params else None)
+
+        if response is not None and response.status_code in (HTTPStatus.OK, HTTPStatus.NO_CONTENT):
+            self.logger.debug("Successfully executed native DynDNS URL HTTP GET request")
+            return True
+        elif response is not None:
+            self.logger.error(
+                f"Failed native DynDNS URL update: {response.status_code} - {response.text}"
+            )
+            return False
+        else:
+            self.logger.error(
+                "Failed native DynDNS URL update: No response from endpoint"
+            )
+            return False

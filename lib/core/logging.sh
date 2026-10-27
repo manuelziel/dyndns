@@ -5,8 +5,6 @@
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # LOGGING & OUTPUT - Colored and formatted output functions
@@ -20,7 +18,7 @@ print_status() {
 }
 
 print_success() {
-    [[ ${QUIET_MODE:-0} -eq 1 ]] && return 0
+    [[ "${QUIET_MODE:-0}" -eq 1 ]] && return 0
     print_status "${GREEN}✓ ${1} ${NC}"
 }
 
@@ -29,17 +27,17 @@ print_error() {
 }
 
 print_warning() {
-    [[ ${QUIET_MODE:-0} -eq 1 ]] && return 0
+    [[ "${QUIET_MODE:-0}" -eq 1 ]] && return 0
     print_status "${YELLOW}✗ ${1} ${NC}"
 }
 
 print_info() {
-    [[ ${QUIET_MODE:-0} -eq 1 ]] && return 0
+    [[ "${QUIET_MODE:-0}" -eq 1 ]] && return 0
     print_status "${BLUE}ℹ ${1} ${NC}"
 }
 
 print_debug() {
-    [[ ${DEBUG_MODE:-0} -eq 0 ]] && return 0
+    [[ "${DEBUG_MODE:-0}" -eq 0 ]] && return 0
     print_status "${PURPLE} ${1} ${NC}"
 }
 
@@ -53,7 +51,7 @@ print_status_line() {
 }
 
 print_section() {
-    local title="$1"
+    local title="$*"
 
     echo ""
     echo -e "${BOLD}${CYAN}═══ ${title} ═══${NC}"
@@ -61,10 +59,10 @@ print_section() {
 }
 
 print_banner() {
-    local software_name="${SOFTWARE_NAME:-DynDNS}"
+    local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local mode="${1:-[MODE]}"
-    local description="${SOFTWARE_DESCRIPTION:-Dynamic DNS Client for IONOS}"
-    local version="${VERSION:-[VERSION]}"
+    local description="${SOFTWARE_DESCRIPTION:-"[SOFTWARE_DESCRIPTION]"}"
+    local version="${VERSION:-"[VERSION]"}"
 
     echo ""
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════════${NC}"

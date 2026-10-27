@@ -12,15 +12,12 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import logging
 import time
 from typing import Any, Dict, Optional
 
-# Third-Party Imports
 import requests
 
-# Local Imports
 from src.core.exceptions import ValidationError
 from src.core.constants import HTTPMethod
 
@@ -95,16 +92,8 @@ class HTTPClient:
         Raises:
             ValidationError: If an unsupported HTTP method is provided.
         """
-        if url:
-            final_url = url
-        elif self.base_url and endpoint:
-            final_url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
-        elif endpoint:
-            final_url = endpoint
-        else:
-            self.logger.error(
-                "Either 'url' or 'endpoint' (with base_url) must be provided"
-            )
+        final_url = self._resolve_request_url(endpoint, url)
+        if not final_url:
             return None
 
         retries = kwargs.pop("retries", self.retries)
@@ -112,61 +101,88 @@ class HTTPClient:
 
         for attempt in range(retries):
             try:
-                if method.upper() == "GET":
-                    response = requests.get(
-                        final_url, headers=headers, timeout=timeout, **kwargs
-                    )
-                elif method.upper() == "POST":
-                    response = requests.post(
-                        final_url,
-                        headers=headers,
-                        json=json_data,
-                        timeout=timeout,
-                        **kwargs,
-                    )
-                elif method.upper() == "PUT":
-                    response = requests.put(
-                        final_url,
-                        headers=headers,
-                        json=json_data,
-                        timeout=timeout,
-                        **kwargs,
-                    )
-                elif method.upper() == "DELETE":
-                    response = requests.delete(
-                        final_url, headers=headers, timeout=timeout, **kwargs
-                    )
-                else:
-                    raise ValidationError(f"Unsupported HTTP method: {method}")
-
-                self.logger.debug(
-                    f"{method.upper()} {final_url} - Status: {response.status_code}"
-                )
+                response = self._dispatch_http_request(method, final_url, headers, json_data, timeout, **kwargs)
+                self.logger.debug(f"{method.upper()} {final_url} - Status: {response.status_code}")
                 return response
-
             except requests.exceptions.Timeout:
-                self.logger.warning(
-                    f"Request timeout (attempt {attempt + 1}/{retries}) - {final_url}"
-                )
-                if attempt < retries - 1:
-                    time.sleep(2**attempt)
-
+                self.logger.warning(f"Request timeout (attempt {attempt + 1}/{retries}) - {final_url}")
             except requests.exceptions.RequestException as e:
-                self.logger.warning(
-                    f"Request failed (attempt {attempt + 1}/{retries}): {e}"
-                )
-                if attempt < retries - 1:
-                    time.sleep(2**attempt)
+                self.logger.warning(f"Request failed (attempt {attempt + 1}/{retries}): {e}")
+            if attempt < retries - 1:
+                time.sleep(2**attempt)
 
+        self.logger.error(f"All {retries} retry attempts failed for {method.upper()} {final_url}")
+        return None
+
+
+    def _resolve_request_url(
+        self, endpoint: Optional[str], url: Optional[str]
+    ) -> Optional[str]:
+        """Resolve the target URL from explicit url or base_url + endpoint.
+
+        Args:
+            endpoint: API endpoint path.
+            url: Full URL overriding base_url + endpoint.
+
+        Returns:
+            Resolved URL string, or None if neither is valid.
+        """
+        if url:
+            return url
+        if self.base_url and endpoint:
+            return f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        if endpoint:
+            return endpoint
         self.logger.error(
-            f"All {retries} retry attempts failed for {method.upper()} {final_url}"
+            "Either 'url' or 'endpoint' (with base_url) must be provided"
         )
         return None
 
 
-    ################################################################################
+    def _dispatch_http_request(
+        self,
+        method: str,
+        final_url: str,
+        headers: Optional[Dict[str, str]],
+        json_data: Optional[Dict[str, Any]],
+        timeout: int,
+        **kwargs: Any,
+    ) -> requests.Response:
+        """Dispatch a single HTTP request using the specified HTTP method.
+
+        Args:
+            method: HTTP method (GET, POST, PUT, DELETE).
+            final_url: Resolved target URL.
+            headers: Request headers dictionary.
+            json_data: Optional JSON body payload.
+            timeout: Request timeout in seconds.
+            **kwargs: Additional keyword arguments for requests.
+
+        Returns:
+            The requests.Response object.
+
+        Raises:
+            ValidationError: If the HTTP method is unsupported.
+        """
+        upper_method = method.upper()
+        if upper_method == HTTPMethod.GET:
+            return requests.get(final_url, headers=headers, timeout=timeout, **kwargs)
+        if upper_method == HTTPMethod.POST:
+            return requests.post(
+                final_url, headers=headers, json=json_data, timeout=timeout, **kwargs
+            )
+        if upper_method == HTTPMethod.PUT:
+            return requests.put(
+                final_url, headers=headers, json=json_data, timeout=timeout, **kwargs
+            )
+        if upper_method == HTTPMethod.DELETE:
+            return requests.delete(final_url, headers=headers, timeout=timeout, **kwargs)
+        raise ValidationError(f"Unsupported HTTP method: {method}")
+
+
+    ############################################################################
     # HTTP METHOD CONVENIENCE WRAPPERS - Simplified API
-    ################################################################################
+    ############################################################################
 
     def get(
         self, endpoint: Optional[str] = None, url: Optional[str] = None, **kwargs: Any

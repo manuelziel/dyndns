@@ -18,7 +18,6 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import json
 import logging
 import os
@@ -28,7 +27,6 @@ import threading
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
 
-# Local Imports
 from .encryption import EncryptionManager
 from .constants import SyncStatus, UpdateStatus, DatabaseDefaults
 from .exceptions import DatabaseError, EncryptionError
@@ -66,35 +64,27 @@ class Database:
         """
         self.db_file = db_file
         self.max_connections = max_connections
-        self.logger = logger
+        self.logger = logger or logging.getLogger(__name__)
         self.config = config
-        
         self._pool = queue.Queue(maxsize=max_connections)
         self._pool_lock = threading.Lock()
         self._created_connections = 0
-        
-        if logger:
-            self.logger = logger
-        else:
-            self.logger = logging.getLogger(__name__)
-        
         self._encryption = EncryptionManager(self.config.encryption_key_path, self.logger)
-        
+
         db_exists = os.path.exists(db_file)
-
         self._initialize_pool()
-
         if not db_exists:
             self.logger.info("Database does not exist. Creating a new one...")
             self.create_tables()
+            with self.get_connection() as conn:
+                conn.execute(f"PRAGMA user_version = {DatabaseDefaults.DB_SCHEMA_VERSION}")
+                conn.commit()
+        else:
+            self.run_migrations()
 
-        # Hand off DB file ownership to the service user when running as
-        # root (admin CLI such as import/export). No-op otherwise. Also
-        # covers the WAL/SHM sidecar files if present.
         ensure_service_ownership(db_file, logger=self.logger)
         for sidecar in (f"{db_file}-wal", f"{db_file}-shm"):
             ensure_service_ownership(sidecar, logger=self.logger)
-
         self.logger.info(f"Database initialized with connection pool (max: {max_connections})")
 
 
@@ -103,9 +93,9 @@ class Database:
         self.close()
 
 
-    ################################################################################
+    ############################################################################
     # PUBLIC CONNECTION INTERFACE - Context Manager
-    ################################################################################
+    ############################################################################
     
     @contextmanager
     def get_connection(self) -> Any:
@@ -126,19 +116,15 @@ class Database:
                 conn = self._pool.get(timeout=DatabaseDefaults.POOL_GET_TIMEOUT)
             except queue.Empty:
                 raise DatabaseError("Connection pool exhausted - no connections available")
-            
             try:
                 conn.execute("SELECT 1")
             except sqlite3.Error:
                 try:
                     conn.close()
-                except Exception:
+                except sqlite3.Error:
                     pass
-                conn = None
                 conn = self._create_connection()
-                
             yield conn
-            
         except BaseException:
             if conn:
                 try:
@@ -146,7 +132,6 @@ class Database:
                 except sqlite3.Error:
                     pass
             raise
-            
         finally:
             if conn:
                 try:
@@ -155,9 +140,9 @@ class Database:
                     conn.close()
 
 
-    ################################################################################
+    ############################################################################
     # QUERY EXECUTION METHODS - Public Database Operations
-    ################################################################################
+    ############################################################################
     
     def execute_query(self, query: str, params: Optional[tuple] = None) -> List[sqlite3.Row]:
         """Execute a SELECT query and return results.
@@ -236,9 +221,9 @@ class Database:
             raise DatabaseError(f"Database batch update failed: {e}") from e
 
 
-    ################################################################################
+    ############################################################################
     # RESOURCE MANAGEMENT - Cleanup Methods
-    ################################################################################
+    ############################################################################
 
     def close(self) -> None:
         """Close all connections in the pool."""
@@ -261,9 +246,9 @@ class Database:
                 self.logger.error(f"Error during database cleanup: {e}")
 
 
-    ################################################################################
+    ############################################################################
     # TABLE MANAGEMENT - Schema Creation and Management
-    ################################################################################
+    ############################################################################
 
     def create_tables(self) -> None:
         """Create DynDNS database tables.
@@ -272,10 +257,14 @@ class Database:
         records, IP addresses, update history, and configuration tables.
         Thread-safe operation supporting multi-subdomain architecture.
         """
-        
-        # ===================================================================
-        # ZONES - DNS Zones (Root Domains)
-        # ===================================================================
+        self._create_zone_and_record_tables()
+        self._create_ip_and_history_tables()
+        self._create_config_and_log_tables()
+        self.create_indexes()
+
+
+    def _create_zone_and_record_tables(self) -> None:
+        """Create zones and DNS records tables."""
         self.create_table("zones", [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
             ("zone_name", "TEXT UNIQUE NOT NULL"),              # Root domain: 'website.com'
@@ -284,10 +273,7 @@ class Database:
             ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
             ("updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP")
         ])
-        
-        # ===================================================================
-        # RECORDS - DNS Records (Root + All Subdomains)
-        # ===================================================================
+
         self.create_table("records", [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
             ("zone_id", "INTEGER NOT NULL"),                    # Foreign Key to zones
@@ -304,10 +290,10 @@ class Database:
             ("FOREIGN KEY (zone_id)", "REFERENCES zones(id) ON DELETE CASCADE"),
             ("UNIQUE (zone_id, record_name, record_type)", "")  # Unique constraint
         ])
-        
-        # ===================================================================
-        # IP ADDRESSES - Current State per Record
-        # ===================================================================
+
+
+    def _create_ip_and_history_tables(self) -> None:
+        """Create IP addresses and DNS update audit history tables."""
         self.create_table("ip_addresses", [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
             ("record_id", "INTEGER NOT NULL"),                  # Foreign Key to records
@@ -317,10 +303,7 @@ class Database:
             ("FOREIGN KEY (record_id)", "REFERENCES records(id) ON DELETE CASCADE"),
             ("UNIQUE (record_id)", "")                          # One IP per record
         ])
-        
-        # ===================================================================
-        # DNS UPDATE HISTORY - Audit Trail for all changes
-        # ===================================================================
+
         self.create_table("dns_updates", [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
             ("record_id", "INTEGER NOT NULL"),                  # Foreign Key to records
@@ -331,10 +314,10 @@ class Database:
             ("updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
             ("FOREIGN KEY (record_id)", "REFERENCES records(id) ON DELETE CASCADE")
         ])
-        
-        # ===================================================================
-        # DYNDNS CONFIG - DynDNS Bulk Configuration per Zone
-        # ===================================================================
+
+
+    def _create_config_and_log_tables(self) -> None:
+        """Create DynDNS configuration, application configuration, and log tables."""
         self.create_table("dyndns_config", [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
             ("zone_id", "INTEGER NOT NULL"),                    # Foreign Key to zones
@@ -348,20 +331,14 @@ class Database:
             ("updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
             ("FOREIGN KEY (zone_id)", "REFERENCES zones(id) ON DELETE CASCADE")
         ])
-        
-        # ===================================================================
-        # APP CONFIG - Generic application settings
-        # ===================================================================
+
         self.create_table("app_config", [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
             ("key", "TEXT UNIQUE NOT NULL"),
             ("value", "TEXT"),
             ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
         ])
-        
-        # ===================================================================
-        # APP LOGS - Optional: Database logging
-        # ===================================================================
+
         self.create_table("app_logs", [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
             ("level", "TEXT NOT NULL"),
@@ -385,9 +362,165 @@ class Database:
         self.execute_update(sql)
 
 
-    ################################################################################
+    def create_indexes(self) -> None:
+        """Create database indexes for performance optimization.
+
+        Thread-safe method to idempotently create necessary indexes on high-traffic queries.
+        """
+        self.logger.debug("Creating database indexes...")
+        indexes = [
+            ("idx_records_zone_enabled", "records", "zone_id, enabled"),
+            ("idx_records_provider_id", "records", "provider_record_id"),
+            ("idx_dns_updates_record_time", "dns_updates", "record_id, updated_at"),
+            ("idx_dyndns_config_zone_id", "dyndns_config", "zone_id"),
+        ]
+        for index_name, table_name, columns in indexes:
+            sql = f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({columns});"
+            self.execute_update(sql)
+
+
+    def get_schema_version(self) -> int:
+        """Get the current schema version of the database.
+
+        Returns:
+            int: The schema version (0 if not set).
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA user_version")
+                row = cursor.fetchone()
+                return row[0] if row else 0
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to get schema version: {e}")
+            return 0
+
+
+    def run_migrations(self) -> None:
+        """Check current schema version and execute required SQL migrations.
+
+        Raises:
+            DatabaseError: If database migrations fail.
+        """
+        current = self.get_schema_version()
+        expected = DatabaseDefaults.DB_SCHEMA_VERSION
+
+        if current == DatabaseDefaults.UNVERSIONED_SCHEMA:
+            if self._init_unversioned_schema_if_empty(expected):
+                return
+            self.logger.info("Legacy unversioned database detected. Setting base schema version to 1...")
+            current = 1
+
+        if current >= expected:
+            self.create_indexes()
+            return
+
+        self.logger.info(f"Applying schema migrations (v{current} -> v{expected})...")
+        try:
+            self.create_tables()
+            self._apply_schema_migrations(current, expected)
+            self.create_indexes()
+            self.logger.info(f"Successfully migrated schema to v{expected}")
+        except sqlite3.Error as e:
+            self.logger.error(f"Database migration failed: {e}")
+            raise DatabaseError(f"Database migration failed: {e}")
+
+
+    def _init_unversioned_schema_if_empty(self, expected: int) -> bool:
+        """Initialize schema tables if database is completely new and unversioned.
+
+        Args:
+            expected: Target schema version to set.
+
+        Returns:
+            True if a fresh schema was initialized, False if legacy tables exist.
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='zones'")
+                if not cursor.fetchone():
+                    self.logger.info("Unversioned database detected. Initializing schema tables...")
+                    self.create_tables()
+                    with self.get_connection() as inner_conn:
+                        inner_cursor = inner_conn.cursor()
+                        inner_cursor.execute(f"PRAGMA user_version = {expected}")
+                        inner_conn.commit()
+                    return True
+        except sqlite3.Error:
+            pass
+        return False
+
+
+    def _apply_schema_migrations(self, current: int, expected: int) -> None:
+        """Execute incremental ALTER TABLE statements up to expected schema version.
+
+        Args:
+            current: Current database schema version.
+            expected: Target database schema version.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if current < 2:
+                self._execute_migration_statements(cursor, "v2", [
+                    "ALTER TABLE records ADD COLUMN managed INTEGER DEFAULT 1",
+                    "ALTER TABLE records ADD COLUMN sync_status TEXT DEFAULT 'synced'",
+                    "ALTER TABLE records ADD COLUMN last_synced_at DATETIME",
+                ])
+            if current < 3:
+                self._execute_migration_statements(cursor, "v3", [
+                    "ALTER TABLE dyndns_config ADD COLUMN update_url TEXT",
+                    "ALTER TABLE dyndns_config ADD COLUMN description TEXT",
+                ])
+            cursor.execute(f"PRAGMA user_version = {expected}")
+            conn.commit()
+
+
+    def _execute_migration_statements(
+        self, cursor: sqlite3.Cursor, version_label: str, statements: List[str]
+    ) -> None:
+        """Execute a list of SQL migration statements, ignoring duplicate column errors.
+
+        Args:
+            cursor: Active SQLite cursor.
+            version_label: Schema version label for debug logging (e.g., 'v2').
+            statements: List of SQL ALTER TABLE statements to execute.
+        """
+        self.logger.debug(f"Migrating schema to {version_label}...")
+        for col_sql in statements:
+            try:
+                cursor.execute(col_sql)
+            except sqlite3.OperationalError as e:
+                self.logger.debug(f"Migration notice for {version_label} ({col_sql}): {e}")
+
+
+    def check_schema_compatibility(self) -> bool:
+        """Check if database schema matches expected version and migrate if needed.
+
+        Returns:
+            bool: True if compatible or migrated successfully, False otherwise.
+        """
+        db_version = self.get_schema_version()
+        expected = DatabaseDefaults.DB_SCHEMA_VERSION
+
+        if db_version < expected:
+            try:
+                self.run_migrations()
+                return True
+            except DatabaseError as e:
+                self.logger.error(f"Automated migration failed: {e}")
+                return False
+
+        if db_version > expected:
+            self.logger.error(f"Schema mismatch! DB is v{db_version}, but app requires v{expected}.")
+            return False
+
+        return True
+
+
+    ############################################################################
     # APPLICATION-SPECIFIC METHODS - Configuration Management
-    ################################################################################
+    ############################################################################
 
     def get_config_by_key(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Get configuration value by key.
@@ -436,13 +569,9 @@ class Database:
         return affected > 0
 
 
-    ################################################################################
-    # APPLICATION-SPECIFIC METHODS - DynDNS Operations
-    ################################################################################
-    
-    # ===================================================================
+    ############################################################################
     # ZONE MANAGEMENT - DNS Zones (Root Domains)
-    # ===================================================================
+    ############################################################################
     
     def get_zone_by_id(self, zone_id: int) -> Optional[Dict[str, Any]]:
         """Get zone by database ID.
@@ -454,7 +583,7 @@ class Database:
             Zone dictionary or None if not found.
         """
         rows = self.execute_query("SELECT * FROM zones WHERE id = ?", (zone_id,))
-        return rows[0] if rows else None
+        return dict(rows[0]) if rows else None
     
 
     def get_zone_by_name(self, zone_name: str) -> Optional[Dict[str, Any]]:
@@ -467,7 +596,7 @@ class Database:
             Zone dictionary or None if not found.
         """
         rows = self.execute_query("SELECT * FROM zones WHERE zone_name = ?", (zone_name,))
-        return rows[0] if rows else None
+        return dict(rows[0]) if rows else None
     
 
     def get_all_zones(self) -> List[Dict[str, Any]]:
@@ -476,7 +605,8 @@ class Database:
         Returns:
             List of all zone dictionaries.
         """
-        return self.execute_query("SELECT * FROM zones ORDER BY zone_name")
+        rows = self.execute_query("SELECT * FROM zones ORDER BY zone_name")
+        return [dict(row) for row in rows]
     
 
     def get_all_enabled_zones(self) -> List[Dict[str, Any]]:
@@ -485,10 +615,11 @@ class Database:
         Returns:
             List of all enabled zone dictionaries.
         """
-        return self.execute_query("SELECT * FROM zones WHERE enabled = 1 ORDER BY zone_name")
+        rows = self.execute_query("SELECT * FROM zones WHERE enabled = 1 ORDER BY zone_name")
+        return [dict(row) for row in rows]
     
 
-    def add_zone(self, zone_name: str, provider_zone_id: str, enabled: bool = True) -> Optional[int]:
+    def add_zone(self, zone_name: str, provider_zone_id: Optional[str] = None, enabled: bool = True) -> Optional[int]:
         """Add a new DNS zone.
 
         Args:
@@ -564,12 +695,14 @@ class Database:
             Number of zones deleted (0 or 1).
         """
         sql = "DELETE FROM zones WHERE id = ?"
-        return self.execute_update(sql, (zone_id,))
+        deleted = self.execute_update(sql, (zone_id,))
+        self.delete_config_by_key(f"{DatabaseDefaults.DYNDNS_BUNDLE_ID_PREFIX}{zone_id}")
+        return deleted
     
 
-    # ===================================================================
+    ############################################################################
     # RECORD MANAGEMENT - DNS Records (Root + Subdomains)
-    # ===================================================================
+    ############################################################################
     
     def get_record_by_id(self, record_id: int) -> Optional[Dict[str, Any]]:
         """Get DNS record by database ID.
@@ -581,7 +714,7 @@ class Database:
             Record dictionary or None if not found.
         """
         rows = self.execute_query("SELECT * FROM records WHERE id = ?", (record_id,))
-        return rows[0] if rows else None
+        return dict(rows[0]) if rows else None
     
 
     def get_records_by_zone(self, zone_id: int, enabled_only: bool = True) -> List[Dict[str, Any]]:
@@ -598,7 +731,8 @@ class Database:
             sql = "SELECT * FROM records WHERE zone_id = ? AND enabled = 1 ORDER BY record_name, record_type"
         else:
             sql = "SELECT * FROM records WHERE zone_id = ? ORDER BY record_name, record_type"
-        return self.execute_query(sql, (zone_id,))
+        rows = self.execute_query(sql, (zone_id,))
+        return [dict(row) for row in rows]
     
 
     def get_record_by_name_and_type(self, zone_id: int, record_name: str, record_type: str) -> Optional[Dict[str, Any]]:
@@ -614,7 +748,7 @@ class Database:
         """
         sql = "SELECT * FROM records WHERE zone_id = ? AND record_name = ? AND record_type = ?"
         rows = self.execute_query(sql, (zone_id, record_name, record_type))
-        return rows[0] if rows else None
+        return dict(rows[0]) if rows else None
     
 
     def add_record(self, zone_id: int, record_name: str, record_type: str, provider_record_id: Optional[str] = None, 
@@ -737,11 +871,11 @@ class Database:
             List of orphaned record dictionaries.
         """
         if zone_id:
-            sql = f"SELECT * FROM records WHERE sync_status = '{SyncStatus.ORPHANED}' AND zone_id = ? ORDER BY record_name"
-            rows = self.execute_query(sql, (zone_id,))
+            sql = "SELECT * FROM records WHERE sync_status = ? AND zone_id = ? ORDER BY record_name"
+            rows = self.execute_query(sql, (SyncStatus.ORPHANED, zone_id))
         else:
-            sql = f"SELECT * FROM records WHERE sync_status = '{SyncStatus.ORPHANED}' ORDER BY zone_id, record_name"
-            rows = self.execute_query(sql)
+            sql = "SELECT * FROM records WHERE sync_status = ? ORDER BY zone_id, record_name"
+            rows = self.execute_query(sql, (SyncStatus.ORPHANED,))
         return [dict(row) for row in rows]
     
 
@@ -764,9 +898,9 @@ class Database:
             return self.execute_update(sql, (sync_status, record_id))
     
 
-    # ===================================================================
+    ############################################################################
     # IP ADDRESS MANAGEMENT - Current state per record
-    # ===================================================================
+    ############################################################################
     
     def get_ip_address(self, record_id: int) -> Optional[Dict[str, Any]]:
         """Get current IP address for a record.
@@ -781,7 +915,7 @@ class Database:
             "SELECT ip_address, last_checked_at, last_changed_at FROM ip_addresses WHERE record_id = ?",
             (record_id,)
         )
-        return rows[0] if rows else None
+        return dict(rows[0]) if rows else None
     
 
     def update_ip_address(self, record_id: int, ip_address: str, changed: bool = False) -> None:
@@ -815,9 +949,9 @@ class Database:
             self.execute_update(sql, (record_id, ip_address))
     
 
-    # ===================================================================
+    ############################################################################
     # DNS UPDATE HISTORY - Audit trail per record
-    # ===================================================================
+    ############################################################################
     
     def log_dns_update(self, record_id: int, old_ip: Optional[str], new_ip: str, status: str = UpdateStatus.SUCCESS, error_message: Optional[str] = None) -> None:
         """Log a DNS update to history.
@@ -849,22 +983,23 @@ class Database:
             sql = """SELECT * FROM dns_updates 
                      WHERE record_id = ?
                      ORDER BY updated_at DESC LIMIT ?"""
-            return self.execute_query(sql, (record_id, limit))
+            rows = self.execute_query(sql, (record_id, limit))
         elif zone_id:
             sql = """SELECT du.* FROM dns_updates du
                      JOIN records r ON du.record_id = r.id
                      WHERE r.zone_id = ?
                      ORDER BY du.updated_at DESC LIMIT ?"""
-            return self.execute_query(sql, (zone_id, limit))
+            rows = self.execute_query(sql, (zone_id, limit))
         else:
             sql = """SELECT * FROM dns_updates 
                      ORDER BY updated_at DESC LIMIT ?"""
-            return self.execute_query(sql, (limit,))
+            rows = self.execute_query(sql, (limit,))
+        return [dict(row) for row in rows]
     
 
-    # ===================================================================
+    ############################################################################
     # DYNDNS CONFIG - DynDNS Bulk Configuration
-    # ===================================================================
+    ############################################################################
     
     def get_dyndns_config_by_zone(self, zone_id: int) -> Optional[Dict[str, Any]]:
         """Get DynDNS configuration for a zone.
@@ -876,18 +1011,8 @@ class Database:
             Config dictionary with decrypted api_key, or None if not found.
         """
         rows = self.execute_query("SELECT * FROM dyndns_config WHERE zone_id = ?", (zone_id,))
-        if not rows:
-            return None
-        
-        config = dict(rows[0])
-        if config.get('api_key'):
-            try:
-                config['api_key'] = self._encryption.decrypt(config['api_key'])
-            except EncryptionError as e:
-                self.logger.error(f"Failed to decrypt api_key for zone_id={zone_id}: {e}")
-                return None
-        return config
-    
+        return self._decrypt_dyndns_config_row(rows[0], f"zone_id={zone_id}") if rows else None
+
 
     def get_dyndns_config_by_bulk_id(self, bulk_id: str) -> Optional[Dict[str, Any]]:
         """Get DynDNS configuration by bulkId.
@@ -899,15 +1024,27 @@ class Database:
             Config dictionary with decrypted api_key, or None if not found.
         """
         rows = self.execute_query("SELECT * FROM dyndns_config WHERE bulk_id = ?", (bulk_id,))
-        if not rows:
-            return None
-        
-        config = dict(rows[0])
+        return self._decrypt_dyndns_config_row(rows[0], f"bulk_id={bulk_id}") if rows else None
+
+
+    def _decrypt_dyndns_config_row(
+        self, row: sqlite3.Row, context: str
+    ) -> Optional[Dict[str, Any]]:
+        """Convert a dyndns_config row to dictionary and decrypt its API key.
+
+        Args:
+            row: Database row from dyndns_config table.
+            context: Identifier context for error logging (e.g., 'zone_id=1').
+
+        Returns:
+            Config dictionary with decrypted api_key, or None if decryption fails.
+        """
+        config = dict(row)
         if config.get('api_key'):
             try:
                 config['api_key'] = self._encryption.decrypt(config['api_key'])
             except EncryptionError as e:
-                self.logger.error(f"Failed to decrypt api_key for bulk_id={bulk_id}: {e}")
+                self.logger.error(f"Failed to decrypt api_key for {context}: {e}")
                 return None
         return config
     
@@ -976,9 +1113,9 @@ class Database:
         return self.execute_update(sql, (1 if enabled else 0, zone_id))
 
 
-    ################################################################################
+    ############################################################################
     # PRIVATE METHODS - Internal Implementation
-    ################################################################################
+    ############################################################################
     
     def _initialize_pool(self) -> None:
         """Initialize the connection pool with connections.
@@ -1029,7 +1166,7 @@ class Database:
             conn.execute("PRAGMA foreign_keys = ON")
             
             # This makes SQLite wait and retry if database is locked
-            conn.execute("PRAGMA busy_timeout = 30000") # 30000ms
+            conn.execute(f"PRAGMA busy_timeout = {DatabaseDefaults.BUSY_TIMEOUT}")
             
             # Enable WAL mode for better concurrency
             conn.execute("PRAGMA journal_mode=WAL")

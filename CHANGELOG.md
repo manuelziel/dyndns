@@ -4,7 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.0.3-alpha.6] - 2026-06-26
+---
+
+## [1.0.3-alpha.8] - 2026-10-27
+### Changed
+- Clean up and standardize code and shell scripts across the project
+- Simplify public IP address detection and DynDNS synchronization
+
+### Fixed
+- Improve background service shutdown reliability
+- Keep saved DynDNS update link when changing API credentials and fix config file permissions
+- Properly close database connections when exiting the CLI or single-run mode
+
+## [1.0.3-alpha.7] - 2026-07-14
+### Added
+- Native DynDNS update URL (`update_url`) integration for batch domain synchronization
+- Server network & router best practices section
+
+### Changed
+- Reorganized CLI interactive menus
+
+## [1.0.3-alpha.6] - 2026-06-25
 ### Changed
 - Relocate `config.toml` path from `/usr/local/share/dyndns` to `/etc/dyndns/config.toml` for strict FHS compliance
 - Replace dynamic Python systemd unit generation with static Bash template substitution (`template.service`)

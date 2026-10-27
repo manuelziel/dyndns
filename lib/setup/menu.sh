@@ -5,8 +5,6 @@
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # INTERACTIVE MENU
@@ -156,7 +154,7 @@ show_help() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local version="${VERSION:-"[VERSION]"}"
 
-    print_section "${software_name}" "Setup" "v${version}"
+    print_section "${software_name} Setup v${version}"
     echo ""
     echo "Usage: $0 [ACTION] [OPTIONS]"
     echo ""

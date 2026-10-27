@@ -20,14 +20,11 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import os
 from typing import Optional, Any
 
-# Third-Party Imports
 from cryptography.fernet import Fernet
 
-# Local Imports
 from .exceptions import EncryptionError, ValidationError
 from .ownership import ensure_service_ownership
 from .constants import SystemDefaults, EncryptionDefaults
@@ -67,9 +64,9 @@ class EncryptionManager:
         
         self._setup_encryption()
     
-    ################################################################################
+    ############################################################################
     # PUBLIC INTERFACE - Encryption/Decryption Operations
-    ################################################################################
+    ############################################################################
     
     def encrypt(self, data: str) -> str:
         """Encrypt a string using Fernet encryption.
@@ -140,9 +137,9 @@ class EncryptionManager:
         """
         raise NotImplementedError("Key rotation not yet implemented")
     
-    ################################################################################
+    ############################################################################
     # PRIVATE METHODS - Internal Implementation
-    ################################################################################
+    ############################################################################
     
     def _setup_encryption(self) -> None:
         """Setup encryption key and cipher instance.
@@ -155,46 +152,42 @@ class EncryptionManager:
         """
         try:
             if os.path.exists(self.key_file):
-                with open(self.key_file, 'rb') as f:
-                    self._encryption_key = f.read()
-
-                current_perms = os.stat(self.key_file).st_mode & 0o777
-                if current_perms != SystemDefaults.KEY_FILE_MODE:
-                    os.chmod(self.key_file, SystemDefaults.KEY_FILE_MODE)
-                    if self.logger:
-                        self.logger.warning(f"Fixed encryption key permissions: {self.key_file}")
-
-                # Hand off ownership to the service user when running as
-                # root (admin CLI). No-op otherwise. Key file stays with correct mode.
-                ensure_service_ownership(self.key_file, mode=SystemDefaults.KEY_FILE_MODE, logger=self.logger)
+                self._load_existing_key()
             else:
-                self._encryption_key = Fernet.generate_key()
+                self._generate_new_key()
 
-                key_dir = os.path.dirname(self.key_file)
-                if key_dir and not os.path.exists(key_dir):
-                    os.makedirs(key_dir, mode=SystemDefaults.KEY_DIR_MODE, exist_ok=True)
-
-                with open(self.key_file, 'wb') as f:
-                    f.write(self._encryption_key)
-
-                os.chmod(self.key_file, SystemDefaults.KEY_FILE_MODE)
-
-                # New key file: hand off ownership to service user when
-                # running as root so the daemon can read it at runtime.
-                ensure_service_ownership(self.key_file, mode=SystemDefaults.KEY_FILE_MODE, logger=self.logger)
-
-                if self.logger:
-                    self.logger.info(f"Generated new encryption key: {self.key_file}")
-            
-            # Fernet keys are always 32 bytes URL-safe base64 (44 chars)
             if len(self._encryption_key) != EncryptionDefaults.KEY_LENGTH:
                 raise ValidationError(
                     f"Invalid encryption key length: {len(self._encryption_key)} (expected {EncryptionDefaults.KEY_LENGTH})"
                 )
-            
             self._cipher = Fernet(self._encryption_key)
-            
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Encryption setup failed: {e}")
             raise EncryptionError(f"Failed to setup encryption: {e}")
+
+
+    def _load_existing_key(self) -> None:
+        """Load existing encryption key from file and enforce permissions."""
+        with open(self.key_file, 'rb') as f:
+            self._encryption_key = f.read()
+        current_perms = os.stat(self.key_file).st_mode & 0o777
+        if current_perms != SystemDefaults.KEY_FILE_MODE:
+            os.chmod(self.key_file, SystemDefaults.KEY_FILE_MODE)
+            if self.logger:
+                self.logger.warning(f"Fixed encryption key permissions: {self.key_file}")
+        ensure_service_ownership(self.key_file, mode=SystemDefaults.KEY_FILE_MODE, logger=self.logger)
+
+
+    def _generate_new_key(self) -> None:
+        """Generate a new Fernet key, write to disk, and enforce permissions."""
+        self._encryption_key = Fernet.generate_key()
+        key_dir = os.path.dirname(self.key_file)
+        if key_dir and not os.path.exists(key_dir):
+            os.makedirs(key_dir, mode=SystemDefaults.KEY_DIR_MODE, exist_ok=True)
+        with open(self.key_file, 'wb') as f:
+            f.write(self._encryption_key)
+        os.chmod(self.key_file, SystemDefaults.KEY_FILE_MODE)
+        ensure_service_ownership(self.key_file, mode=SystemDefaults.KEY_FILE_MODE, logger=self.logger)
+        if self.logger:
+            self.logger.info(f"Generated new encryption key: {self.key_file}")

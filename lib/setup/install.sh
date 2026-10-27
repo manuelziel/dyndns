@@ -5,13 +5,13 @@
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # CORE INSTALLATION FUNCTIONS
 ################################################################################
 
+# Fallback dummy function for optional setup hooks.
+# Projects can override this in config.sh.
 if ! command -v setup_optional_function &>/dev/null; then
     setup_optional_function() {
         print_info "No custom setup hook implemented"
@@ -21,6 +21,7 @@ fi
 
 do_install() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+    local cmd_name="${SOFTWARE_DIR_NAME:-"[SOFTWARE_DIR_NAME]"}"
     local force_mode="${FORCE_MODE:-0}"
     local create_service_flag="${CREATE_SERVICE:-false}"
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
@@ -38,7 +39,6 @@ do_install() {
         return 1
     fi
     
-    backup_installation || true  # Don't fail if backup fails
 
     if [[ "${enable_optional_dependency}" -eq 1 ]]; then
         if ! setup_optional_function; then
@@ -70,7 +70,7 @@ do_install() {
 
     echo ""
     print_info "Next steps:"
-    echo "  1. Configure: ${software_name} config"
+    echo "  1. Configure: ${cmd_name} config"
     echo "  2. Enable & start: sudo systemctl enable --now ${service_name}"
     echo "  3. View logs: sudo journalctl -u ${service_name} -f"
 
@@ -99,9 +99,6 @@ do_update() {
 
     FORCE_MODE=1
 
-    if ! backup_installation; then
-        print_warning "Backup failed, update continues"
-    fi
 
     if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[SERVICE_NAME]" ]] && service_active; then
         was_running=true
@@ -138,7 +135,7 @@ do_update() {
         fi
     elif [[ "${was_running}" == "true" ]] && [[ "${install_result}" -ne 0 ]]; then
         print_warning "Update failed - service remains stopped"
-        print_info "You may need to restore from backup and restart service manually"
+        print_info "You may need to restart service manually once fixed"
     fi
     
     FORCE_MODE="${old_force}"
@@ -212,13 +209,14 @@ do_uninstall() {
     print_success "${software_name} uninstalled completely!"
     
     if [[ "${PURGE_MODE:-0}" -eq 0 ]]; then
-        print_info "Note: Data directory ${VAR_LIB_DIR:-/var/lib/[SOFTWARE_DIR_NAME]} was preserved"
+        print_info "Note: Data directory ${VAR_LIB_DIR:-"[VAR_LIB_DIR]"} was preserved"
         print_info "Use 'purge' or 'uninstall --purge' to remove all data"
     fi
 
     return 0
 }
 
+# Get systemd template unit files safely
 get_template_unit_files() {
     local template_dir="${_DIR}/systemd"
     if [[ ! -d "${template_dir}" ]]; then
@@ -275,8 +273,8 @@ remove_systemd_services() {
 do_purge() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local force_mode="${FORCE_MODE:-0}"
-    local var_lib_dir="${VAR_LIB_DIR:-"/var/lib/[VAR_LIB_DIR]"}"
-    local etc_dir="${ETC_DIR:-"/etc/[SOFTWARE_DIR_NAME]"}"
+    local var_lib_dir="${VAR_LIB_DIR:-"[VAR_LIB_DIR]"}"
+    local etc_dir="${ETC_DIR:-"[ETC_DIR]"}"
 
     print_section "Purging ${software_name}"
     print_warning "This will remove ALL data"
@@ -458,23 +456,6 @@ remove_service_user() {
     return 0
 }
 
-backup_installation() {
-    local install_path="${INSTALL_PATH:-"[INSTALL_PATH]"}"
-    local backup_path="${install_path}.backup.$(date +%Y%m%d_%H%M%S)"
-
-    if is_installed; then
-        print_info "Creating backup of current installation..."
-
-        if cp "$install_path" "$backup_path" 2>/dev/null; then
-            print_success "Backup created: $backup_path"
-            return 0
-        else
-            print_warning "Failed to create backup"
-            return 1
-        fi
-    fi
-    return 0
-}
 
 install_files() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"

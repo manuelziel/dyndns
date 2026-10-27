@@ -19,14 +19,11 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import signal
 import threading
 import time
-import sys
 from typing import Optional, Dict, Any
 
-# Local Imports
 from src.core.constants import DaemonDefaults
 
 ################################################################################
@@ -66,9 +63,9 @@ class DaemonManager:
         self.logger.debug("Daemon manager initialized")
 
 
-    ################################################################################
+    ############################################################################
     # PUBLIC INTERFACE - Daemon Lifecycle Management
-    ################################################################################
+    ############################################################################
 
     def start(self) -> bool:
         """Start the daemon in a background thread.
@@ -113,30 +110,28 @@ class DaemonManager:
         if not self.running:
             self.logger.warning("Daemon is not running")
             return False
-            
         self.logger.info("Stopping daemon...")
-        
         try:
             self._stop_event.set()
             self.running = False
-            
+            if hasattr(self.application, 'stop'):
+                try:
+                    self.application.stop()
+                except Exception as e:
+                    self.logger.warning(f"Application stop failed: {e}")
             if self._daemon_thread and self._daemon_thread.is_alive():
                 self.logger.debug("Waiting for daemon thread to finish...")
                 self._daemon_thread.join(timeout=DaemonDefaults.STOP_TIMEOUT)
-                
                 if self._daemon_thread.is_alive():
                     self.logger.warning("Daemon thread did not stop within timeout")
                     return False
-                    
             if hasattr(self.application, 'cleanup'):
                 try:
                     self.application.cleanup()
                 except Exception as e:
                     self.logger.warning(f"Application cleanup failed: {e}")
-                    
             self.logger.info("Daemon stopped successfully")
             return True
-            
         except Exception as e:
             self.logger.error(f"Error stopping daemon: {e}")
             return False
@@ -168,9 +163,9 @@ class DaemonManager:
             self.running = False
 
 
-    ################################################################################
+    ############################################################################
     # PUBLIC INTERFACE - Status and Information
-    ################################################################################
+    ############################################################################
 
     def is_running(self) -> bool:
         """Check if the daemon is currently running.
@@ -198,9 +193,9 @@ class DaemonManager:
         }
 
 
-    ################################################################################
+    ############################################################################
     # PRIVATE METHODS - Internal Implementation
-    ################################################################################
+    ############################################################################
 
     def _setup_signal_handlers(self) -> None:
         """Setup Unix signal handlers for graceful shutdown and reload.
@@ -247,33 +242,25 @@ class DaemonManager:
         by the configuration. Handles timing to maintain consistent intervals.
         """
         self.logger.debug(f"Daemon loop started (interval: {self.config.daemon_check_interval}s)")
-        
         while self.running and not self._stop_event.is_set():
             try:
                 cycle_start_time = time.time()
-                
                 if hasattr(self.application, 'run_cycle'):
-                    success = self.application.run_cycle()
-                    if not success:
+                    if not self.application.run_cycle():
                         self.logger.warning("Application cycle returned failure")
                 else:
                     self.logger.warning("Application does not have run_cycle method")
-                
+
                 cycle_duration = time.time() - cycle_start_time
                 sleep_time = max(0, self.config.daemon_check_interval - cycle_duration)
-                
                 if sleep_time > 0:
                     self.logger.debug(f"Cycle completed in {cycle_duration:.2f}s, sleeping for {sleep_time:.2f}s")
                     if self._stop_event.wait(timeout=sleep_time):
                         break
                 else:
                     self.logger.warning(f"Cycle took {cycle_duration:.2f}s, longer than interval {self.config.daemon_check_interval}s")
-                    
             except Exception as e:
                 self.logger.error(f"Error in daemon loop: {e}")
-                if not self._stop_event.wait(timeout=self.config.daemon_retry_delay):
-                    continue
-                else:
+                if self._stop_event.wait(timeout=self.config.daemon_retry_delay):
                     break
-                    
         self.logger.debug("Daemon loop finished")

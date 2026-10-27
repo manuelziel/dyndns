@@ -29,14 +29,11 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
-import logging
 import os
 import pwd
 import grp
 from typing import Optional, Any
 
-# Local Imports
 from .constants import EnvKeys, SystemDefaults
 
 
@@ -66,42 +63,30 @@ def ensure_service_ownership(
     Returns:
         True on success, False on any failure or no-op.
     """
-    if os.geteuid() != 0:
+    if os.geteuid() != 0 or not os.path.exists(path):
         return False
 
     service_user = os.environ.get(EnvKeys.SERVICE_USER, "").strip()
     if not service_user or service_user == SystemDefaults.ROOT_USER:
         return False
-
     service_group = os.environ.get(EnvKeys.SERVICE_GROUP, "").strip() or service_user
-
-    if not os.path.exists(path):
-        return False
 
     try:
         uid = pwd.getpwnam(service_user).pw_uid
         gid = grp.getgrnam(service_group).gr_gid
     except KeyError:
         if logger:
-            logger.debug(
-                f"Service user/group not found: {service_user}:{service_group}"
-            )
-        return False
-
-    try:
-        os.chown(path, uid, gid)
-    except OSError as exc:
-        if logger:
-            logger.warning(f"Failed to chown {path} to {service_user}: {exc}")
+            logger.debug(f"Service user/group not found: {service_user}:{service_group}")
         return False
 
     if mode is None:
         mode = SystemDefaults.DIR_MODE_GROUP_WRITE if os.path.isdir(path) else SystemDefaults.FILE_MODE_GROUP_WRITE
     try:
+        os.chown(path, uid, gid)
         os.chmod(path, mode)
     except OSError as exc:
         if logger:
-            logger.warning(f"Failed to chmod {path}: {exc}")
+            logger.warning(f"Failed to update ownership/permissions on {path}: {exc}")
         return False
 
     return True

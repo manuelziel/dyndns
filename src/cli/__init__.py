@@ -11,7 +11,7 @@ License: MIT
 # PACKAGE IMPORTS
 ################################################################################
 
-# Local Imports
+from .settings import SettingsManager
 from .status import StatusDisplay
 from .exporter import ConfigExporter
 from .importer import ConfigImporter
@@ -25,5 +25,6 @@ __all__ = [
     'ConfigMenu', 
     'ConfigImporter', 
     'ConfigExporter', 
-    'StatusDisplay'
-    ]
+    'StatusDisplay',
+    'SettingsManager',
+]

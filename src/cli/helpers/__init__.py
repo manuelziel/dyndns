@@ -11,7 +11,6 @@ License: MIT
 # PACKAGE IMPORTS
 ################################################################################
 
-# Local Imports
 from .validate import (
     is_valid_domain,
     is_valid_ipv4,

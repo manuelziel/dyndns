@@ -5,8 +5,6 @@
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # CORE APPLICATION LOGIC
@@ -15,7 +13,7 @@
 do_main_work() {
     start_python_application "$@"
 
-    return 0
+    return $?
 }
 
 # Return 0 if start/stop/restart should be delegated to systemctl.
@@ -51,13 +49,13 @@ send_signal() {
     if ! kill -0 "${pid}" 2>/dev/null; then
         if sudo kill -0 "${pid}" 2>/dev/null; then
             sudo kill -"${signal}" "${pid}" 2>/dev/null
-            return 0
+            return $?
         fi
         return 1
     fi
     
     kill -"${signal}" "${pid}" 2>/dev/null
-    return 0
+    return $?
 }
 
 start_application() {
@@ -68,7 +66,7 @@ start_application() {
 
     if is_running; then
         print_warning "${software_name} is already running"
-        return 0
+        return $?
     fi
 
     # Delegate to systemd so the daemon runs under the configured SERVICE_USER
@@ -121,13 +119,13 @@ stop_application() {
     done
 
     print_info "Waiting to terminate the processes..."
-    while [[ ${count} -lt ${max_wait} ]]; do
+    while [[ "${count}" -lt "${max_wait}" ]]; do
         remaining_pids=$(pgrep -f "^python3 .*${python_script}" || true)
         if [[ -z "${remaining_pids}" ]]; then
             break
         fi
         sleep 1
-        ((count++))
+        count=$((count + 1))
     done
 
     # Force kill any remaining processes
@@ -142,6 +140,7 @@ stop_application() {
 
     print_info "Cleaning up..."
     remove_pid_file
+    remaining_pids=$(pgrep -f "^python3 .*${python_script}" || true)
 
     if [[ -z "${remaining_pids}" ]]; then
         print_success "${software_name} stopped"
@@ -190,12 +189,12 @@ configure_application() {
 
     print_info "Starting interactive configuration menu..."
 
-    if [[ ${ENABLE_PYTHON:-0} -eq 1 ]]; then
+    if [[ "${ENABLE_PYTHON:-0}" -eq 1 ]]; then
         start_python_cli "config"
     else
         print_warning "Python support not enabled"
         print_info "Edit configuration files manually"
     fi
 
-    return 0
+    return $?
 }

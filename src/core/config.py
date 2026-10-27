@@ -17,22 +17,22 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import logging
 import os
+import re
 import tomllib
 from typing import Dict, Any, Optional
 
-# Local Imports
 from .exceptions import ConfigError
 from .database import Database
+from .ownership import ensure_service_ownership
 from .constants import (
     AppPaths,
     ProviderAPI,
     NetworkAPI,
     DaemonDefaults,
     DNSDefaults,
-    LoggingDefaults
+    LoggingDefaults,
 )
 
 
@@ -64,22 +64,28 @@ class ConfigManager:
         Raises:
             ConfigError: If configuration file cannot be loaded or parsed.
         """
+        self.current_dir = current_dir
+        self.config_path = config_path
         self.logger = logger or logging.getLogger(__name__)
         self.config = self.load_config(config_path)
-        
-        self._load_debug_config()
-        self._load_api_config()
-        self._load_network_config()
-        self._load_dns_config()
-        self._load_daemon_config()
-        self._load_database_config(current_dir)
 
+        self._apply_config()
         self._init_database()
 
 
-    ################################################################################
+    ############################################################################
     # PUBLIC INTERFACE - Configuration Loading and Management
-    ################################################################################
+    ############################################################################
+
+    def reload(self) -> None:
+        """Reload configuration from the TOML file at runtime.
+
+        Raises:
+            ConfigError: If configuration file cannot be reloaded or validated.
+        """
+        self.config = self.load_config(self.config_path)
+        self._apply_config()
+
 
     def load_config(self, path: str) -> Dict[str, Any]:
         """Load configuration from a TOML file.
@@ -105,9 +111,19 @@ class ConfigManager:
             raise ConfigError(f"Error loading configuration from {path}: {e}")
 
 
-    ################################################################################
+    ############################################################################
     # PRIVATE METHODS - Configuration Initialization
-    ################################################################################
+    ############################################################################
+
+    def _apply_config(self) -> None:
+        """Apply parsed TOML configuration to all section attributes."""
+        self._load_debug_config()
+        self._load_api_config()
+        self._load_network_config()
+        self._load_dns_config()
+        self._load_daemon_config()
+        self._load_database_config(self.current_dir)
+
 
     def _init_database(self) -> None:
         """Initialize database connection.
@@ -123,9 +139,9 @@ class ConfigManager:
             raise ConfigError(f"Database initialization failed: {e}")
 
 
-    ################################################################################
+    ############################################################################
     # PRIVATE METHODS - Configuration Section Loaders
-    ################################################################################
+    ############################################################################
 
     def _load_debug_config(self) -> None:
         """Load debug configuration settings from TOML."""
@@ -153,6 +169,7 @@ class ConfigManager:
     def _load_dns_config(self) -> None:
         """Load DNS configuration settings from TOML."""
         self.dns_default_ttl = self.config.get("dns", {}).get("default_ttl", DNSDefaults.DEFAULT_TTL)
+        self.dns_update_method = self.config.get("dns", {}).get("update_method", DNSDefaults.DEFAULT_UPDATE_METHOD)
 
 
     def _load_daemon_config(self) -> None:
@@ -161,7 +178,6 @@ class ConfigManager:
         self.daemon_check_interval = self.config.get("daemon", {}).get("check_interval", DaemonDefaults.CHECK_INTERVAL)
         self.daemon_max_retries = self.config.get("daemon", {}).get("max_retries", DaemonDefaults.MAX_RETRIES)
         self.daemon_retry_delay = self.config.get("daemon", {}).get("retry_delay", DaemonDefaults.RETRY_DELAY)
-        self.force_update_interval = self.config.get("daemon", {}).get("force_update_interval", DaemonDefaults.FORCE_UPDATE_INTERVAL)
         self.daemon_sync_checks = self.config.get("daemon", {}).get("sync_checks", DaemonDefaults.SYNC_CHECKS)
         
         
@@ -179,3 +195,95 @@ class ConfigManager:
         
         key_file = self.config.get("database", {}).get("encryption_key_path", AppPaths.ENCRYPTION_KEY_FILE)
         self.encryption_key_path = key_file if os.path.isabs(key_file) else os.path.join(AppPaths.DATA_DIR, key_file)
+
+
+    ############################################################################
+    # PUBLIC INTERFACE - Configuration Modification
+    ############################################################################
+
+    def update_setting(self, section: str, key: str, value: Any) -> bool:
+        """Update a setting in the TOML configuration file while preserving comments.
+
+        Args:
+            section: Section name in TOML (e.g., 'dns').
+            key: Setting key within the section (e.g., 'update_method').
+            value: New value to write.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+            formatted_value = self._format_toml_value(value)
+            new_lines = self._update_toml_lines(lines, section, key, formatted_value)
+
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+            ensure_service_ownership(self.config_path, logger=self.logger)
+
+            if section not in self.config:
+                self.config[section] = {}
+            self.config[section][key] = value
+            self._apply_config()
+
+            self.logger.info(f"Updated config setting {section}.{key} = {formatted_value}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to update setting {section}.{key}: {e}")
+            return False
+
+
+    def _format_toml_value(self, value: Any) -> str:
+        """Format a Python value as a TOML literal string.
+
+        Args:
+            value: Value to format (str, bool, int, float).
+
+        Returns:
+            TOML-formatted string representation.
+        """
+        if isinstance(value, str):
+            return f'"{value}"'
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+
+    def _update_toml_lines(
+        self, lines: list[str], section: str, key: str, formatted_value: str
+    ) -> list[str]:
+        """Update or insert a key-value pair within the target TOML section.
+
+        Args:
+            lines: Existing lines from the TOML file.
+            section: Target TOML section name.
+            key: Setting key name.
+            formatted_value: TOML-formatted value string.
+
+        Returns:
+            Updated list of file lines.
+        """
+        section_header = f"[{section}]"
+        in_section = False
+        key_updated = False
+        new_lines = []
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                if in_section and not key_updated:
+                    new_lines.append(f"{key} = {formatted_value}\n")
+                    key_updated = True
+                in_section = (stripped == section_header)
+            elif in_section and re.match(rf"^{re.escape(key)}\s*=", stripped):
+                line = f"{key} = {formatted_value}\n"
+                key_updated = True
+            new_lines.append(line)
+
+        if in_section and not key_updated:
+            new_lines.append(f"{key} = {formatted_value}\n")
+        elif not key_updated:
+            new_lines.append(f"\n[{section}]\n{key} = {formatted_value}\n")
+        return new_lines

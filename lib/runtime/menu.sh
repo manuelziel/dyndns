@@ -5,8 +5,6 @@
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # INTERACTIVE MENU
@@ -34,6 +32,14 @@ show_interactive_menu() {
         option_actions=()
         option_num=1
 
+        options+=("${option_num}) Status")
+        option_actions+=("show_status")
+        ((option_num++))
+
+        options+=("${option_num}) Configure")
+        option_actions+=("configure_application")
+        ((option_num++))
+
         options+=("${option_num}) Start")
         option_actions+=("start_application")
         ((option_num++))
@@ -46,20 +52,12 @@ show_interactive_menu() {
         option_actions+=("restart_application")
         ((option_num++))
 
-        options+=("${option_num}) Setup Virtual Environment")
-        option_actions+=("setup_virtual_environment")
-        ((option_num++))
-
-        options+=("${option_num}) Configure")
-        option_actions+=("configure_application")
-        ((option_num++))
-
-        options+=("${option_num}) Status")
-        option_actions+=("show_status")
-        ((option_num++))
-
         options+=("${option_num}) Help")
         option_actions+=("help")
+        ((option_num++))
+
+        options+=("${option_num}) Rebuild Virtual Environment")
+        option_actions+=("rebuild_python_environment")
         ((option_num++))
 
         # Store max choice number (last option number)
@@ -100,9 +98,9 @@ show_interactive_menu() {
                     export DAEMON_MODE=1
                     restart_application
                     ;;
-                "setup_virtual_environment")
-                    if [[ ${enable_python} -eq 1 ]]; then
-                        setup_virtual_environment
+                "rebuild_python_environment")
+                    if [[ "${enable_python}" -eq 1 ]]; then
+                        rebuild_python_environment
                     else
                         print_warning "Python support is not enabled in the config."
                     fi
@@ -145,7 +143,7 @@ show_help() {
     local version="${VERSION:-"[VERSION]"}"
     local cmd_name="${SOFTWARE_DIR_NAME:-$(basename "$0")}"
 
-    print_section "${software_name}" "v${version}"
+    print_section "${software_name} v${version}"
     echo ""
     echo "Usage: ${cmd_name} [ACTION] [OPTIONS]"
     echo ""
@@ -155,6 +153,8 @@ show_help() {
     echo "  restart                          # Restart ${software_name}"
     echo "  setup-env                        # Setup Python virtual environment"
     echo "  config                           # Configure ${software_name}"
+    echo "  import <file>                    # Import configuration from file"
+    echo "  export [options]                 # Export configuration to file/stdout"
     echo "  status                           # Show ${software_name} status"
     echo "  help, --help, -h                 # Show this help"
     echo "  version                          # Show version information"
@@ -163,6 +163,7 @@ show_help() {
     echo "  --interactive, -i                # Force interactive mode"
     echo "  --daemon, -d                     # Run in daemon mode (for start action)"
     echo "  --quiet, -q                      # Quiet mode (suppress output)"
+    echo "  --debug                          # Enable debug output"
     echo "  --help, -h                       # Show this help"
     echo "  --version, -v                    # Show version information"
     echo ""
@@ -172,16 +173,17 @@ show_help() {
     echo "  ${cmd_name} stop                 # Stop ${software_name}"
     echo "  ${cmd_name} restart              # Restart ${software_name}"
     echo "  ${cmd_name} setup-env            # Setup Python virtual environment"
-    echo ""
-    echo "View logs:"
-    echo "  sudo journalctl -u ${SERVICE_NAME:-${cmd_name}} -n 50 --no-pager"
-    echo "  sudo journalctl -u ${SERVICE_NAME:-${cmd_name}} -f"
-    echo ""
     echo "  ${cmd_name} config               # Configure application"
+    echo "  ${cmd_name} import config.yaml   # Import configuration"
+    echo "  ${cmd_name} export --output backup.yaml # Export configuration"
     echo "  ${cmd_name} status               # Show status"
     echo "  ${cmd_name} --interactive        # Show interactive menu"
     echo "  ${cmd_name} --help               # Show this help"
     echo "  ${cmd_name} --version            # Show version information"
+    echo ""
+    echo "View logs:"
+    echo "  sudo journalctl -u ${SERVICE_NAME:-${cmd_name}} -n 50 --no-pager"
+    echo "  sudo journalctl -u ${SERVICE_NAME:-${cmd_name}} -f"
     echo ""
 }
 

@@ -12,10 +12,9 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
+import os
 from typing import Any, Callable, Dict, List, Optional
 
-# Local Imports
 from src.core.constants import PlaceholderIP
 from src.cli.constants import PromptDefaults, CLIConfig, SelectionChoices
 from src.utils.colors import Colors, LOG_SYMBOLS
@@ -198,7 +197,6 @@ def get_choice_from_list(
     for idx, item in enumerate(items, start=1):
         display_text = display_func(item) if display_func else str(item)
         print(f" {idx}) {display_text}")
-
     if allow_cancel:
         print(f" {SelectionChoices.CANCEL}) Cancel")
 
@@ -206,10 +204,7 @@ def get_choice_from_list(
         max_idx = len(items)
         cancel_prompt = f" ({SelectionChoices.CANCEL}-{max_idx}): " if allow_cancel else f" (1-{max_idx}): "
         choice_str = safe_input(f"\n{prompt}{cancel_prompt}").strip()
-
-        if not choice_str and allow_cancel:
-            return None
-        if choice_str == SelectionChoices.CANCEL and allow_cancel:
+        if (not choice_str or choice_str == SelectionChoices.CANCEL) and allow_cancel:
             return None
         if not choice_str.isdigit():
             print_error("Enter a valid number!")
@@ -219,7 +214,6 @@ def get_choice_from_list(
         if choice < 1 or choice > max_idx:
             print_error(f"Select a number between 1 and {max_idx}!")
             continue
-
         selected = items[choice - 1]
         return row_to_dict(selected) if selected else None
 
@@ -233,7 +227,6 @@ def resolve_path(path: str) -> str:
     Returns:
         Cleaned absolute canonical path.
     """
-    import os
     return os.path.abspath(os.path.expanduser(path.strip()))
 
 
@@ -248,7 +241,6 @@ def is_valid_file_path(path: str, must_exist: bool = False) -> bool:
     Returns:
         True if path is valid, False otherwise.
     """
-    import os
     if not path:
         return False
 

@@ -130,13 +130,14 @@ sudo dyndns import backup.yaml --overwrite
 
 ## Sync Operations
 
-### Automatic Daemon Sync (Recommended)
+### Automatic Daemon Sync & Self-Healing (Recommended)
 
-The daemon automatically handles synchronization when `sync_checks = true` (enabled by default):
+The daemon (`dyndns.service`) automatically verifies and heals your DNS configuration at startup and every check interval when `sync_checks = true` (enabled by default in `/etc/dyndns/config.toml`):
 
-- **Orphan Detection**: Detects deleted records → marks as orphaned → recreates automatically
-- **Provider ID Recovery**: Missing provider_record_id → syncs zone → recreates record
-- **Self-Healing**: No manual intervention needed
+- **Orphan Detection & Recovery (`dyndns` + `rest` modes)**: Detects if configured `A`/`AAAA` records (`@`, `www`, etc.) were deleted or modified on the IONOS provider dashboard → recreates missing entries automatically via REST API (`POST /v1/zones/{id}/records`).
+- **DynDNS Bundle Auto-Binding (`dyndns` mode)**: After restoring any missing subdomains on IONOS, the daemon automatically activates a fresh DynDNS `updateUrl` bundle (`bulkId`) and executes it immediately with your current IPv4/IPv6 so all recovered records get populated instantly.
+- **Provider ID Recovery**: Missing `provider_record_id` or out-of-sync local IDs → syncs zone → recreates or links records seamlessly.
+- **Real-Time CLI Execution**: Adding, editing, or deleting records inside `sudo dyndns config -> Option 2 (Manage zones) -> Option 3 (Manage Records)` immediately updates the IONOS DynDNS bundle and executes the `updateUrl` in real time. New subdomains go live within seconds without waiting for the next daemon check cycle.
 
 ### Manual Sync Options
 
@@ -172,6 +173,37 @@ sudo systemctl restart dyndns
 - **Authentication error:** Update credentials via `sudo dyndns config`
 - **IPv6 disabled:** Edit `config.toml` -> `ipv6_enabled = false`
 - **Firewall:** Ensure HTTPS (443) outbound allowed
+
+### Server Network & Router Best Practices (IPv6 / Timeouts)
+
+If your DNS records are updated successfully (`[DYNDNS TRIGGERED] Record updated`), but accessing your domain from a web browser yields `ERR_CONNECTION_TIMED_OUT`, verify the following server and router configuration settings:
+
+#### 1. Force Permanent Static IPv6 Interface-ID (EUI-64)
+Modern Linux systems (with `NetworkManager` or `dhcpcd`) default to RFC 7217 Stable-Privacy or RFC 4941 Privacy Extensions. These generate hashed or temporary IPv6 Interface-IDs (`::xxxx:xxxx:xxxx:xxxx`) that may change after OS upgrades, system reboots, or router prefix renewals (`ISP Reconnect`). When this occurs, DynDNS updates the `AAAA` DNS record to the new address, but the router's inbound port forwarding rule still targets the previous Interface-ID, causing connection timeouts.
+
+To ensure your server's IPv6 Interface-ID remains permanently tied to your hardware MAC address across all ISP reboots (`addr-gen-mode eui64`):
+
+```bash
+# For NetworkManager (Debian, Ubuntu, Fedora, Raspberry Pi OS Bookworm):
+# 1. Identify active connection name (e.g., 'Wired connection 1' or 'eth0'):
+nmcli -f NAME,DEVICE connection show --active
+
+# 2. Disable privacy extensions and enforce EUI-64 MAC derivation:
+sudo nmcli connection modify "Wired connection 1" ipv6.ip6-privacy 0 ipv6.addr-gen-mode eui64
+sudo nmcli connection up "Wired connection 1"
+
+# 3. Verify permanent EUI-64 Interface-ID (middle insertion FF:FE):
+ip -br -6 a
+```
+
+#### 2. Synchronize Router Port Forwarding
+In your router settings:
+- Set the **IPv6-Interface-ID** field to exactly match your EUI-64 suffix from `ip -br -6 a` (e.g., `::2ecf:67ff:fefb:d150`).
+- Check the box for *"Always assign this Interface-ID"*.
+
+#### 3. LAN Loopback & Split-Horizon DNS (`DNS-Rebind-Protection`)
+If your domain works externally (`Smartphone via 4G/5G`) but times out when accessed from inside your home network (`PC / Laptop`):
+- **Router Rebind Protection:** Add your domains (`yourdomain.com` and `www.yourdomain.com`) to the router's **DNS Rebind Protection**
 
 ### Reinstall / Uninstall
 

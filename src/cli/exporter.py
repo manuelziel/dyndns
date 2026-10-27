@@ -12,22 +12,20 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import json
 import os
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 from abc import ABC, abstractmethod
 
-# Optional Imports
 try:
     import yaml
 except ImportError:
     yaml = None
 
-# Local Imports
 from src.core.exceptions import DatabaseError
 from src.core.constants import ExportFormat
+from src.core.ownership import ensure_service_ownership
 from .helpers.output import print_error, row_to_dict
 
 
@@ -92,9 +90,11 @@ class BaseExporter(ABC):
                 output = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
             
             if output_file:
-                with open(output_file, 'w', encoding='utf-8') as f:
+                resolved_path = os.path.abspath(os.path.expanduser(output_file))
+                with open(resolved_path, 'w', encoding='utf-8') as f:
                     f.write(output)
-                self.logger.info(f"Configuration exported to {output_file}")
+                ensure_service_ownership(resolved_path, logger=self.logger)
+                self.logger.info(f"Configuration exported to {resolved_path}")
             else:
                 print(output)
             

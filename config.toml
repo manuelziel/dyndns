@@ -45,6 +45,10 @@ retry_attempts = 3
 
 # ----------- DNS CONFIGURATION -----------
 [dns]
+# Default update method: "dyndns" (Native GET updateUrl, recommended) 
+# or "rest" (Check IP via external service & PUT individual records)
+update_method = "dyndns"
+
 # Default Time-To-Live (TTL) for DNS records in seconds
 # TTL determines how long DNS resolvers cache the record before querying again
 # Recommended: 3600 (1 hour) for dynamic DNS with moderate update frequency
@@ -65,9 +69,6 @@ max_retries = 3
 
 # Delay between retry attempts in seconds
 retry_delay = 60
-
-# Force update even if IP hasn't changed (for periodic updates)
-force_update_interval = 86400  # 24 hours in seconds
 
 # Enable daemon sync checks (reconciliation of provider_record_id, orphan detection)
 # When enabled, the daemon will verify provider_record_id exists before updates

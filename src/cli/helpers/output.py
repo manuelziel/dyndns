@@ -12,12 +12,10 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import json
 import os
 from typing import Any, Dict, List, Optional
 
-# Local Imports
 from src.utils.colors import Colors, LOG_SYMBOLS
 from src.cli.constants import CLIConfig
 

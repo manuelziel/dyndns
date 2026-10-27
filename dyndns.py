@@ -23,7 +23,6 @@ License: MIT
 # IMPORTS
 ################################################################################
 
-# Standard Imports
 import sys
 import os
 import argparse
@@ -33,13 +32,14 @@ from typing import Optional, Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
 
-# Local Imports
-from src import __version__, __author__, __software_name__
+from src import __version__, __software_name__
 from src.core import ConfigManager, LoggerManager, AppPaths, ExportFormat
 from src.daemon import DaemonManager
 from src.application import Application
 from src.cli import ConfigMenu, ConfigImporter, ConfigExporter
 from src.cli.constants import CLICommands
+
+logger: Optional[logging.Logger] = None
 
 ################################################################################
 # ARGUMENT PARSING
@@ -104,40 +104,28 @@ def handle_cli_command(args: argparse.Namespace, config: ConfigManager, logger: 
     Returns:
         Exit code (0 for success, 1 for error).
     """
-    if args.command == CLICommands.CONFIG:
-        logger.debug("Starting interactive configuration menu...")
-        try:
-            menu = ConfigMenu(config, logger)
-            menu.run()
+    try:
+        if args.command == CLICommands.CONFIG:
+            logger.debug("Starting interactive configuration menu...")
+            ConfigMenu(config, logger).run()
             return 0
-        except Exception as e:
-            logger.error(f"Unexpected error: Configuration menu failed: {e}")
-            return 1
-        
-    elif args.command == CLICommands.IMPORT:
-        try:
-            importer = ConfigImporter(config, logger)
-            result = importer.import_from_file(args.file, overwrite=args.overwrite)
+        if args.command == CLICommands.IMPORT:
+            result = ConfigImporter(config, logger).import_from_file(args.file, overwrite=args.overwrite)
             if result == 0:
                 logger.info("Configuration imported successfully")
                 return 0
-            else:
-                logger.error("Configuration import failed")
-                return 1
-        except Exception as e:
-            logger.error(f"Unexpected error: Import failed: {e}")
+            logger.error("Configuration import failed")
             return 1
-            
-    elif args.command == CLICommands.EXPORT:
-        try:
-            exporter = ConfigExporter(config, logger)
-            exporter.export_to_file(output_file=args.output, format=args.format)
-            logger.info("Configuration exported successfully")
-            return 0
-        except Exception as e:
-            logger.error(f"Unexpected error: Export failed: {e}")
+        if args.command == CLICommands.EXPORT:
+            result = ConfigExporter(config, logger).export_to_file(output_file=args.output, format_type=args.format)
+            if result == 0:
+                logger.info("Configuration exported successfully")
+                return 0
+            logger.error("Configuration export failed")
             return 1
-    
+    except Exception as e:
+        logger.error(f"Unexpected error: CLI command '{args.command}' failed: {e}")
+        return 1
     return 0
 
 
@@ -158,12 +146,9 @@ def shutdown_handler(signum: int, frame: Any) -> None:
     Note:
         DaemonManager in src/daemon.py handles signals in daemon mode.
     """
-    try:
-        logger = logging.getLogger(__software_name__)
-        if logger.hasHandlers():
-            logger.info(f"Received signal {signum}, shutting down gracefully...")
-    except Exception:
-        pass
+    global logger
+    if logger:
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
     
     sys.exit(0)
 
@@ -171,6 +156,41 @@ def shutdown_handler(signum: int, frame: Any) -> None:
 ################################################################################
 # MAIN APPLICATION
 ################################################################################
+
+def _run_service_or_single_cycle(config: ConfigManager, logger: logging.Logger, daemon_mode: bool) -> int:
+    """Run the application in daemon mode or execute a single update cycle.
+
+    Args:
+        config: Configuration manager instance.
+        logger: Logger instance.
+        daemon_mode: True to run continuously as a daemon, False for single cycle.
+
+    Returns:
+        Exit code (0 for success, 1 for error).
+    """
+    logger.debug("Initializing application services...")
+    app = Application(config, logger)
+    if daemon_mode:
+        logger.debug("Setting up daemon manager...")
+        daemon = DaemonManager(app, config, logger)
+        logger.debug("Starting daemon mode (continuous monitoring)...")
+        daemon.run_forever()
+        logger.debug("DynDNS daemon shutdown complete")
+        return 0
+
+    logger.debug("Starting single-run mode...")
+    try:
+        if app.run_cycle():
+            logger.info("Single update completed successfully")
+            return 0
+        logger.warning("Single update completed with warnings")
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error: Single update failed: {e}")
+        return 1
+    finally:
+        app.cleanup()
+
 
 def main() -> int:
     """Main application entry point.
@@ -185,59 +205,33 @@ def main() -> int:
         Daemon mode is controlled by DAEMON_MODE environment variable,
         which is set by the bash wrapper (dyndns.sh).
     """
-    version = __version__
-    software_name = __software_name__
+    global logger
 
-    args = parse_arguments()
-
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.environ.get("CONFIG_FILE", os.path.join(current_dir, AppPaths.CONFIG_FILE))
-    config = ConfigManager(current_dir, config_path)
-    
-    log_level = getattr(logging, config.log_level, logging.INFO)
-    
-    # Check environment variable for daemon mode (set by bash wrapper)
-    daemon_mode = os.environ.get('DAEMON_MODE', '0') == '1'
-    logger = LoggerManager.get_logger(software_name, level=log_level, daemon_mode=daemon_mode)
-    
-    if args.command:
-        return handle_cli_command(args, config, logger)
-    
-    run_mode = "daemon" if daemon_mode else "once"
-    
-    logger.info(f"{software_name} starting... (mode: {run_mode})")
-    logger.info(f"Version: {version}")
-    logger.info(f"Log level: {config.log_level}")
-    
-    # Register signal handlers for graceful shutdown (fallback for non-daemon mode)
-    # BEST PRACTICE: Always handle SIGTERM/SIGINT, never use SIG_IGN
-    # Note: DaemonManager registers its own handlers in daemon mode
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
-    
-    logger.debug("Initializing application services...")
-    app = Application(config, logger)
-    
-    logger.debug("Setting up daemon manager...")
-    daemon = DaemonManager(app, config, logger)
-    if daemon_mode:
-        logger.debug("Starting daemon mode (continuous monitoring)...")
-        daemon.run_forever()
-        logger.debug("DynDNS daemon shutdown complete")
-    else:
-        logger.debug("Starting single-run mode...")
-        
+
+    args = parse_arguments()
+    daemon_mode = os.environ.get('DAEMON_MODE', '0') == '1'
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.environ.get("CONFIG_FILE", os.path.join(current_dir, AppPaths.CONFIG_FILE))
+    logger = LoggerManager.get_logger(__software_name__, level=logging.INFO, daemon_mode=daemon_mode)
+    config = ConfigManager(current_dir, config_path, logger=logger)
+
+    LoggerManager.set_level(logger, config.log_level)
+    LoggerManager.set_console_colors(logger, config.console_colors)
+
+    if args.command:
         try:
-            if app.run_cycle():
-                logger.info("Single update completed successfully")
-            else:
-                logger.warning("Single update completed with warnings")
-                return 1
-        except Exception as e:
-            logger.error(f"Unexpected error: Single update failed: {e}")
-            return 1
-    
-    return 0
+            return handle_cli_command(args, config, logger)
+        finally:
+            if getattr(config, "db", None):
+                config.db.close()
+
+    run_mode = "daemon" if daemon_mode else "once"
+    logger.info(f"{__software_name__} starting... (mode: {run_mode})")
+    logger.info(f"Version: {__version__}")
+    logger.info(f"Log level: {config.log_level}")
+    return _run_service_or_single_cycle(config, logger, daemon_mode)
 
 
 ################################################################################
@@ -245,8 +239,6 @@ def main() -> int:
 ################################################################################
 
 if __name__ == "__main__":
-    logger: Optional[logging.Logger] = None
-    
     try:
         exit_code = main()
         sys.exit(exit_code)

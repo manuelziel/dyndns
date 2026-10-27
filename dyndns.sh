@@ -1,11 +1,10 @@
 #!/bin/bash
+# dyndns.sh
 #
 # DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 # Enable strict error handling
 set -euo pipefail
@@ -61,7 +60,7 @@ source "$LIB_BASE_DIR/runtime/menu.sh"
 source "$LIB_BASE_DIR/runtime/application.sh"
 
 # Load optional modules based on configuration
-if [[ ${ENABLE_PYTHON:-0} -eq 1 ]]; then
+if [[ "${ENABLE_PYTHON:-0}" -eq 1 ]]; then
     source "$LIB_BASE_DIR/modules/python.sh"
 fi
 
@@ -69,6 +68,7 @@ fi
 QUIET_MODE=0
 DAEMON_MODE=0
 INTERACTIVE_MODE=0
+DEBUG_MODE=0
 ACTION=""
 CLI_ARGS=()
 PYTHON_ARGS=()
@@ -167,6 +167,10 @@ parse_arguments() {
                 QUIET_MODE=1
                 shift
                 ;;
+            --debug)
+                DEBUG_MODE=1
+                shift
+                ;;
             --)
                 shift
                 PYTHON_ARGS=("$@")
@@ -239,11 +243,8 @@ main() {
         config)
             configure_application
             ;;
-        import)
-            start_python_cli "import" "${CLI_ARGS[@]}"
-            ;;
-        export)
-            start_python_cli "export" "${CLI_ARGS[@]}"
+        import|export)
+            start_python_cli "${ACTION}" "${CLI_ARGS[@]}"
             ;;
         status)
             show_status
@@ -264,6 +265,8 @@ main() {
             cleanup_and_exit 1
             ;;
     esac
+
+    successful_exit 0
 }
 
 main "$@"

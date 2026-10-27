@@ -24,17 +24,23 @@ License: MIT
 """
 
 ################################################################################
+# PACKAGE METADATA
+################################################################################
+
+from .core.constants import AppSettings
+
+__version__ = AppSettings.VERSION
+__author__ = AppSettings.AUTHOR
+__email__ = AppSettings.EMAIL
+__description__ = AppSettings.DESCRIPTION
+__software_name__ = AppSettings.SOFTWARE_NAME
+__syslog_identifier__ = AppSettings.SYSLOG_IDENTIFIER
+
+################################################################################
 # PACKAGE IMPORTS
 ################################################################################
 
-# Local Imports
-from .core.constants import AppSettings
-
 from .core import (
-    ConfigManager,
-    Database,
-    EncryptionManager,
-    LoggerManager,
     DynDNSException,
     DatabaseError,
     ConfigError,
@@ -44,21 +50,16 @@ from .core import (
     RecordNotFoundError,
     ZoneNotFoundError,
     ValidationError,
+    LoggerManager,
+    Database,
+    ConfigManager,
+    EncryptionManager,
 )
-
 from .utils import Colors, LOG_COLORS, LOG_SYMBOLS
 from .network import NetworkData
 from .api import HTTPClient
 from .daemon import DaemonManager
 from .application import Application
-
-# Package metadata
-__version__ = AppSettings.VERSION
-__author__ = AppSettings.AUTHOR
-__email__ = AppSettings.EMAIL
-__description__ = AppSettings.DESCRIPTION
-__software_name__ = AppSettings.SOFTWARE_NAME
-__syslog_identifier__ = AppSettings.SYSLOG_IDENTIFIER
 
 
 ################################################################################
@@ -71,11 +72,6 @@ __all__ = [
     '__author__',
     '__software_name__',
     '__syslog_identifier__',
-    # Core
-    'ConfigManager',
-    'Database',
-    'EncryptionManager',
-    'LoggerManager',
     # Exceptions
     'DynDNSException',
     'DatabaseError',
@@ -86,6 +82,11 @@ __all__ = [
     'RecordNotFoundError',
     'ZoneNotFoundError',
     'ValidationError',
+    # Core
+    'LoggerManager',
+    'Database',
+    'ConfigManager',
+    'EncryptionManager',
     # Utils
     'Colors',
     'LOG_COLORS',

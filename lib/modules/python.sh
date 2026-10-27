@@ -5,8 +5,6 @@
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # VIRTUAL ENVIRONMENT MANAGEMENT
@@ -99,12 +97,7 @@ install_python_dependencies() {
 export_python_environment() {
     local python_src_dir
     local share_dir="${SHARE_DIR:-"[SHARE_DIR]"}"
-    local software_dir_name="${SOFTWARE_DIR_NAME:-"[SOFTWARE_DIR_NAME]"}"
-    local pid_file="${PID_FILE:-"[PID_FILE]"}"
-    local config_file="${RUNTIME_CONFIG_FILE:-"[RUNTIME_CONFIG_FILE]"}"
-    local data_dir="${DATA_DIR:-"[DATA_DIR]"}"
-    local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
-    local debug="${DEBUG:-0}"
+    local debug="${DEBUG_MODE:-${DEBUG:-0}}"
     local verbose="${VERBOSE:-0}"
 
 
@@ -125,7 +118,7 @@ export_python_environment() {
         export PYTHON_SRC_DIR="${python_src_dir}"
     fi
 
-    if [[ "${debug:-0}" -eq 1 ]]; then
+    if [[ "${debug:-0}" -eq 1 || "${DEBUG:-0}" -eq 1 ]]; then
         export DEBUG=1
     fi
     if [[ "${verbose:-0}" -eq 1 ]]; then
@@ -188,7 +181,7 @@ start_python_application() {
         # Save PID to file with safety checks
         local pid_file="${PID_FILE}"
         if [[ -n "${pid_file}" ]]; then
-            local pid_dir=$(dirname "${pid_file}")
+            local pid_dir="$(dirname "${pid_file}")"
             # Try to create the runtime directory if missing (for manual runs;
             # systemd creates it via RuntimeDirectory= for service starts).
             if [[ ! -d "${pid_dir}" ]]; then
@@ -222,13 +215,13 @@ start_python_application() {
         python3 "${python_script}" "$@"
         local exit_code=$?
         
-        if [[ ${exit_code} -eq 0 ]]; then
+        if [[ "${exit_code}" -eq 0 ]]; then
             print_success "Application completed successfully"
         else
             print_error "Application failed with exit code: ${exit_code}"
         fi
         
-        return ${exit_code}
+        return "${exit_code}"
     fi
 }
 
@@ -273,11 +266,11 @@ start_python_cli() {
     "${python_bin}" "${python_script}" "${cli_command}" "$@"
     exit_code=$?
 
-    if [[ ${exit_code} -ne 0 ]]; then
+    if [[ "${exit_code}" -ne 0 ]]; then
         print_error "CLI command failed with exit code: ${exit_code}"
     fi
 
-    return ${exit_code}
+    return "${exit_code}"
 }
 
 ################################################################################
@@ -297,5 +290,31 @@ setup_python_environment() {
         return 1
     fi
 
+    return 0
+}
+
+rebuild_python_environment() {
+    local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
+    local service_user="${SERVICE_USER:-root}"
+    local service_group="${SERVICE_GROUP:-${service_user}}"
+
+    print_info "Rebuilding Python virtual environment..."
+
+    if [[ -n "${venv_dir}" && "${venv_dir}" != "[VENV_DIR]" && "${venv_dir}" != "/" && -d "${venv_dir}" ]]; then
+        print_info "Removing existing virtual environment at ${venv_dir}..."
+        rm -rf "${venv_dir}"
+    fi
+
+    if ! setup_python_environment; then
+        return 1
+    fi
+
+    if [[ "${EUID}" -eq 0 && -n "${service_user}" && "${service_user}" != "root" && "${service_user}" != "[SERVICE_USER]" ]]; then
+        if getent passwd "${service_user}" >/dev/null 2>&1; then
+            chown -R "${service_user}:${service_group}" "${venv_dir}" 2>/dev/null || true
+        fi
+    fi
+
+    print_success "Virtual environment rebuilt successfully"
     return 0
 }

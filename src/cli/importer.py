@@ -12,25 +12,22 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import json
 import os
 from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
 
-# Optional Imports
 try:
     import yaml
 except ImportError:
     yaml = None
 
-# Local Imports
 from src.core.exceptions import DatabaseError
 from src.core.constants import ExportFormat
 from src.utils.colors import Colors
 from .helpers.output import (
     print_error, print_success, print_info, print_warning,
-    print_section, print_subsection
+    print_subsection
 )
 
 ################################################################################
@@ -239,28 +236,16 @@ class ConfigImporter(BaseImporter):
                 print_warning(f"Zone exists (skipped): {zone_name}")
                 return
             zone_id = existing_zone['id']
-            self.db.update_zone(
-                zone_id,
-                provider_zone_id=zone_data.get('provider_zone_id'),
-                enabled=zone_data.get('enabled', True)
-            )
+            self.db.update_zone(zone_id, provider_zone_id=zone_data.get('provider_zone_id'), enabled=zone_data.get('enabled', True))
             stats['updated'] += 1
             print_info(f"Zone updated: {zone_name}")
         else:
-            zone_id = self.db.add_zone(
-                zone_name=zone_name,
-                provider_zone_id=zone_data.get('provider_zone_id'),
-                enabled=zone_data.get('enabled', True)
-            )
+            zone_id = self.db.add_zone(zone_name=zone_name, provider_zone_id=zone_data.get('provider_zone_id'), enabled=zone_data.get('enabled', True))
             stats['added'] += 1
             print_success(f"Zone added: {zone_name}")
 
         if 'bulk_id' in zone_data and 'api_key' in zone_data:
-            self.db.set_dyndns_config(
-                zone_id=zone_id,
-                bulk_id=zone_data['bulk_id'],
-                api_key=zone_data['api_key']
-            )
+            self.db.set_dyndns_config(zone_id=zone_id, bulk_id=zone_data['bulk_id'], api_key=zone_data['api_key'])
 
         record_count = self._import_zone_records(zone_id, zone_data.get('records', []), overwrite)
         stats['records'] += record_count

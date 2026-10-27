@@ -26,24 +26,19 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import logging
 import os
 import sys
 import threading
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
-# Third-Party Imports
 try:
     from systemd import journal
 except ImportError:
     journal = None
 
-# Local Imports
 from ..utils.colors import LOG_COLORS, LOG_SYMBOLS
 from .exceptions import ConfigError
-
-# Import syslog identifier for consistent logging
 from .constants import AppSettings, LoggingDefaults
 
 __syslog_identifier__ = os.environ.get('SYSLOG_IDENTIFIER') or AppSettings.SYSLOG_IDENTIFIER
@@ -104,7 +99,7 @@ class ColoredFormatter(logging.Formatter):
         super().__init__(format_string, datefmt='%H:%M:%S')
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record with colors and symbols.
+        """Format log record with colors and symbols without mutating record state.
 
         Args:
             record: Log record to format.
@@ -116,18 +111,22 @@ class ColoredFormatter(logging.Formatter):
         color = self.COLORS.get(level_name, '')
         symbol = self.SYMBOLS.get(level_name, '')
         reset = self.COLORS['RESET']
-        
-        original_msg = record.getMessage()
-        
+        original_msg = record.msg
+        original_args = record.args
+        rendered_msg = record.getMessage()
+
         if symbol:
-            formatted_msg = f"{color}{symbol} {original_msg}{reset}"
+            formatted_msg = f"{color}{symbol} {rendered_msg}{reset}"
         else:
-            formatted_msg = f"{color}{original_msg}{reset}"
-        
+            formatted_msg = f"{color}{rendered_msg}{reset}"
+
         record.msg = formatted_msg
         record.args = None
-        
-        return super().format(record)
+        try:
+            return super().format(record)
+        finally:
+            record.msg = original_msg
+            record.args = original_args
 
 
 class LoggerManager:
@@ -144,12 +143,12 @@ class LoggerManager:
     _loggers: Dict[str, logging.Logger] = {}
     _lock = threading.Lock()
 
-    ################################################################################
+    ############################################################################
     # PUBLIC CLASS METHODS - Logger Factory
-    ################################################################################
+    ############################################################################
 
     @classmethod
-    def get_logger(cls, name: str, **kwargs) -> logging.Logger:
+    def get_logger(cls, name: str, **kwargs: Any) -> logging.Logger:
         """Get or create a logger instance.
 
         Thread-safe factory method that returns cached loggers or creates
@@ -160,6 +159,7 @@ class LoggerManager:
             **kwargs: Configuration options:
                 level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
                 daemon_mode: If True, only use journal handler (no console).
+                console_colors: If True, use ANSI colors on console output.
 
         Returns:
             Configured logging.Logger instance.
@@ -171,74 +171,102 @@ class LoggerManager:
         with cls._lock:
             if name not in cls._loggers:
                 cls._loggers[name] = cls._create_logger(name, **kwargs)
+            else:
+                if 'level' in kwargs and kwargs['level'] is not None:
+                    cls.set_level(cls._loggers[name], kwargs['level'])
+                if 'console_colors' in kwargs and kwargs['console_colors'] is not None:
+                    cls.set_console_colors(cls._loggers[name], bool(kwargs['console_colors']))
             return cls._loggers[name]
 
-    ################################################################################
-    # PRIVATE CLASS METHODS - Logger Configuration
-    ################################################################################
+    @classmethod
+    def set_level(cls, logger: logging.Logger, level: int | str) -> None:
+        """Update the log level of a logger and all its attached handlers.
+
+        Args:
+            logger: Logger instance to update.
+            level: Numeric logging level or level name string.
+        """
+        numeric_level = (
+            getattr(logging, level.upper(), logging.INFO)
+            if isinstance(level, str)
+            else int(level)
+        )
+        logger.setLevel(numeric_level)
+        for handler in logger.handlers:
+            handler.setLevel(numeric_level)
 
     @classmethod
-    def _create_logger(cls, name: str, **kwargs) -> logging.Logger:
+    def set_console_colors(cls, logger: logging.Logger, console_colors: bool) -> None:
+        """Update console handler formatter based on console_colors setting.
+
+        Args:
+            logger: Logger instance to update.
+            console_colors: If True, use ColoredFormatter; otherwise PlainFormatter.
+        """
+        formatter = ColoredFormatter(include_timestamp=False) if console_colors else PlainFormatter()
+        for handler in logger.handlers:
+            if type(handler) is logging.StreamHandler:
+                handler.setFormatter(formatter)
+
+    ############################################################################
+    # PRIVATE CLASS METHODS - Logger Configuration
+    ############################################################################
+
+    @classmethod
+    def _create_logger(cls, name: str, **kwargs: Any) -> logging.Logger:
         """Create and configure a new logger instance.
 
         Args:
             name: Logger name for identification.
-            **kwargs: Configuration options (level, daemon_mode).
+            **kwargs: Configuration options (level, daemon_mode, console_colors).
 
         Returns:
             Configured logging.Logger instance with handlers.
         """
-        # Auto-detect systemd: INVOCATION_ID and JOURNAL_STREAM are set by
-        # systemd when launching a service. If either is present, stdout is
-        # already forwarded to the journal — adding a console handler would
-        # cause every log line to appear twice in journalctl.
         running_under_systemd = bool(
-            os.environ.get('INVOCATION_ID') or os.environ.get('JOURNAL_STREAM')
+            os.environ.get('INVOCATION_ID') or os.environ.get('JOURNAL_STREAM') or os.environ.get('DAEMON_MODE') == '1'
         )
         daemon_mode = kwargs.get('daemon_mode', running_under_systemd)
+        console_colors = bool(kwargs.get('console_colors', LoggingDefaults.CONSOLE_COLORS))
 
-        # Explicit log level from kwargs (from config.toml)
         log_level = kwargs.get('level', None)
         if log_level is not None and isinstance(log_level, str):
             log_level = getattr(logging, log_level.upper(), logging.INFO)
-
-        # Environment variables (bash DEBUG/VERBOSE)
         if log_level is None:
-            debug_mode = os.environ.get('DEBUG', '0') == '1'
-            verbose_mode = os.environ.get('VERBOSE', '0') == '1'
-            
-            if debug_mode:
+            if os.environ.get('DEBUG', '0') == '1':
                 log_level = logging.DEBUG
-            elif verbose_mode:
+            elif os.environ.get('VERBOSE', '0') == '1':
                 log_level = logging.INFO
             else:
                 log_level = logging.WARNING
-        
+
         logger = logging.getLogger(name)
         logger.setLevel(log_level)
-        
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
-        
         if not daemon_mode:
-            cls._setup_console_handler(logger, log_level)
-        
+            cls._setup_console_handler(logger, log_level, console_colors=console_colors)
         cls._setup_journal_handler(logger, name, log_level)
         cls._setup_live_logging()
-        
         return logger
     
     @classmethod
-    def _setup_console_handler(cls, logger: logging.Logger, level: int) -> None:
-        """Setup console handler with ANSI color formatting.
+    def _setup_console_handler(
+        cls,
+        logger: logging.Logger,
+        level: int,
+        console_colors: bool = LoggingDefaults.CONSOLE_COLORS,
+    ) -> None:
+        """Setup console handler with optional ANSI color formatting.
 
         Args:
             logger: Logger instance to configure.
             level: Minimum log level for the handler.
+            console_colors: If True, use ColoredFormatter; otherwise PlainFormatter.
         """
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
-        console_formatter = ColoredFormatter(include_timestamp=False)
+        console_formatter = ColoredFormatter(include_timestamp=False) if console_colors else PlainFormatter()
         console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
     
@@ -257,6 +285,9 @@ class LoggerManager:
         Raises:
             ConfigError: If journal setup fails unexpectedly.
         """
+        if journal is None:
+            return
+
         try:
             journal_handler = journal.JournalHandler(SYSLOG_IDENTIFIER=__syslog_identifier__)
             journal_handler.setLevel(level)
@@ -265,10 +296,6 @@ class LoggerManager:
             journal_formatter = PlainFormatter()
             journal_handler.setFormatter(journal_formatter)
             logger.addHandler(journal_handler)
-
-        except ImportError:
-            # systemd journal not available, skip silently
-            pass
         except Exception as e:
             raise ConfigError(f"Failed to setup journal logging: {e}")
     

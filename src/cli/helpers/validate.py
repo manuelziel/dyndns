@@ -12,10 +12,8 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 import re
 
-# Local Imports
 from src.cli.constants import ValidationRegex, ValidationLimits
 
 ################################################################################

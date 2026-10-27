@@ -5,15 +5,13 @@
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # CORE UTILITIES & STATUS
 ################################################################################
 
 check_root() {
-    if [[ ${EUID} -ne 0 ]]; then
+    if [[ "${EUID}" -ne 0 ]]; then
         print_error "This operation requires root privileges"
         print_info "Run with sudo: sudo $0 $*"
         return 1
@@ -28,7 +26,7 @@ check_root() {
 check_runtime_user() {
     local service_user="${SERVICE_USER:-root}"
 
-    if [[ ${EUID} -eq 0 ]]; then
+    if [[ "${EUID}" -eq 0 ]]; then
         return 0
     fi
 
@@ -127,7 +125,7 @@ check_dependencies() {
 
 ################################################################################
 # INSTALLATION STATUS
-################################################################################ 
+################################################################################
 
 is_installed() {
     local install_path="${INSTALL_PATH:-"[INSTALL_PATH]"}"
@@ -312,7 +310,7 @@ show_service_status() {
     local service_status="$(get_service_status)"
 
     if is_installed; then
-        if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[service-name].service" ]]; then
+        if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[SERVICE_NAME]" ]]; then
             case "${service_status}" in
                 "running (enabled)")
                     print_status_line "Service" "${GREEN}" "✓" "${service_status}"
@@ -365,11 +363,11 @@ show_internet_status() {
 }
 
 show_requirements() {
-    local software_name=${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}
+    local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local dependencies="$(printf '%s, ' "${!DEPENDENCIES[@]}" | sed 's/, $//')"
-    local service_name=${SERVICE_NAME:-"[SERVICE_NAME]"}
-    local service_path=${SERVICE_PATH:-"[SERVICE_PATH]"}
-    local install_path=${INSTALL_PATH:-"[INSTALL_PATH]"}
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
+    local service_path="${SERVICE_PATH:-"[SERVICE_PATH]"}"
+    local install_path="${INSTALL_PATH:-"[INSTALL_PATH]"}"
     local os_info="Linux"
     
     if [[ -f /etc/os-release ]]; then
@@ -384,16 +382,16 @@ show_requirements() {
     echo "  • Operating System: ${os_info}"
     echo "  • Required commands: ${dependencies:-"none"}"
     echo "  • Installation path: ${install_path}"
-    if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[service-name].service" ]]; then
+    if [[ -n "${service_name}" ]] && [[ "${service_name}" != "[SERVICE_NAME]" ]]; then
         echo "  • Service file: ${service_path}"
     fi
 }
 
 show_version() {
-    local software_name=${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}
-    local version=${VERSION:-"[VERSION]"}
-    local last_modified=${LAST_MODIFIED:-"[LAST_MODIFIED]"}
-    local author=${AUTHOR:-"[AUTHOR]"}
+    local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+    local version="${VERSION:-"[VERSION]"}"
+    local last_modified="${LAST_MODIFIED:-"[LAST_MODIFIED]"}"
+    local author="${AUTHOR:-"[AUTHOR]"}"
 
     echo "${software_name}"
     echo "Version: v${version} (${last_modified})"

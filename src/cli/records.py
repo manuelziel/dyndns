@@ -11,16 +11,16 @@ License: MIT
 ################################################################################
 # IMPORTS & DEPENDENCIES
 ################################################################################
-# Standard Imports
+
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-# Local Imports
 from src.core.exceptions import DatabaseError, RecordNotFoundError, ZoneNotFoundError, APIError, DynDNSException, NetworkError
-from src.core.constants import SyncStatus, UpdateStatus, RecordType, Subdomain, PlaceholderIP, DatabaseDefaults
+from src.core.constants import SyncStatus, UpdateStatus, RecordType, Subdomain, PlaceholderIP, DatabaseDefaults, UpdateMethod
 from src.cli.constants import RecordMenuChoices, EditRecordMenuChoices, CLIConfig, MenuLabels, ValidationLimits, SelectionChoices
 from src.network import NetworkData
 from src.api import ProviderDNSClient
+from src.services.helpers.dyndns_helper import DynDNSBundleHandler
 from src.utils.colors import Colors
 
 from .helpers.input import (
@@ -376,11 +376,39 @@ class RecordManager:
             wait_for_enter()
             return
 
+        if self.config.dns_update_method == UpdateMethod.DYNDNS:
+            self._add_record_dyndns_mode(zone['id'], record_name, record_type, ttl)
+            return
+
         provider = self._get_provider_with_credentials(zone, warn_on_missing=True, require_zone_id=True)
         if not provider:
             self._add_record_locally_only(zone['id'], record_name, record_type, ttl)
         else:
             self._add_record_with_provider_flow(zone, provider, record_name, record_type, ttl)
+
+
+    def _add_record_dyndns_mode(self, zone_id: int, record_name: str, record_type: str, ttl: int) -> None:
+        """Add record locally and synchronize the native DynDNS bundle on provider.
+
+        Args:
+            zone_id: Database zone ID.
+            record_name: Record name.
+            record_type: Record type.
+            ttl: TTL value.
+        """
+        try:
+            record_id = self.db.add_record(
+                zone_id=zone_id, record_name=record_name, record_type=record_type,
+                ttl=ttl, managed=True, sync_status=SyncStatus.SYNCED
+            )
+            if record_id is None:
+                raise DatabaseError("Failed to insert record into database")
+            print_success(f"Record added locally! (ID: {record_id})")
+            self._sync_dyndns_bundle_if_needed(zone_id)
+        except (ValueError, TypeError, DatabaseError) as e:
+            print_error(f"Error adding record: {e}")
+            self.logger.error(f"Failed to add record '{record_name}': {e}")
+        wait_for_enter()
 
 
     def _add_record_locally_only(self, zone_id: int, record_name: str, record_type: str, ttl: int) -> None:
@@ -407,10 +435,11 @@ class RecordManager:
                 managed=True,
                 sync_status=SyncStatus.LOCAL_ONLY
             )
-            assert record_id is not None, "Failed to insert record into database"
+            if record_id is None:
+                raise DatabaseError("Failed to insert record into database")
             print_success(f"Record added locally! (ID: {record_id})")
             print_warning("Note: Record not created at provider. Configure API credentials to sync.")
-        except (ValueError, TypeError, AssertionError) as e:
+        except (ValueError, TypeError, DatabaseError) as e:
             print_error(f"Error adding record: {e}")
             self.logger.error(f"Failed to add record '{record_name}': {e}")
         wait_for_enter()
@@ -468,10 +497,11 @@ class RecordManager:
                 managed=True,
                 sync_status=SyncStatus.SYNCED
             )
-            assert record_id is not None, "Failed to insert record into database"
+            if record_id is None:
+                raise DatabaseError("Failed to insert record into database")
             print_success(f"Existing record imported! (ID: {record_id})")
             self._fetch_and_store_provider_record_ip(zone['provider_zone_id'], provider, provider_id, record_id)
-        except (ValueError, TypeError, AssertionError) as e:
+        except (ValueError, TypeError, DatabaseError) as e:
             print_error(f"Error importing record: {e}")
             self.logger.error(f"Failed to import record '{record_name}': {e}")
 
@@ -539,31 +569,27 @@ class RecordManager:
         try:
             print_info("Creating record at provider...")
             api_record = provider.build_record_dict(record_name, record_type, current_ip, ttl, False)
-            success = provider.create_records(zone['provider_zone_id'], [api_record])
-            if not success:
+            if not provider.create_records(zone['provider_zone_id'], [api_record]):
                 raise APIError("Provider record creation failed")
-
             print_success("Record created at provider!")
             print_info("Syncing to retrieve provider record ID...")
             self._sync_zone_with_provider(zone, provider)
-
             prov_id = provider.find_record_id(zone['provider_zone_id'], record_name, record_type)
             record_id = self.db.add_record(
                 zone_id=zone['id'], record_name=record_name, record_type=record_type,
                 provider_record_id=prov_id, ttl=ttl, enabled=True, managed=True, sync_status=SyncStatus.SYNCED
             )
-            assert record_id is not None, "Failed to insert record into database"
-
+            if record_id is None:
+                raise DatabaseError("Failed to insert record into database")
             if current_ip not in [PlaceholderIP.IPV4, PlaceholderIP.IPV6]:
                 self.db.update_ip_address(record_id, current_ip)
                 print_success(f"IP address stored: {current_ip}")
-
             print_success(f"Record added successfully! (ID: {record_id})")
             if prov_id:
                 print_info(f"Provider Record ID: {prov_id}")
             else:
                 print_warning("Note: Could not retrieve provider_record_id. Use 'Sync records from provider' to update.")
-        except (ValueError, TypeError, KeyError, APIError, AssertionError) as e:
+        except (ValueError, TypeError, KeyError, APIError, DatabaseError) as e:
             print_error(f"Error creating record: {e}")
             self.logger.error(f"Failed to create record '{record_name}': {e}")
             print_warning("Record may have been created at provider but not in local database.")
@@ -646,7 +672,7 @@ class RecordManager:
 
             if confirm_action("Sync TTL to provider immediately?", default=False):
                 self._sync_ttl_to_provider(zone, record, new_ttl)
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, DatabaseError) as e:
             print_error(f"Error updating record: {e}")
             self.logger.error(f"Failed to update record {record['id']}: {e}")
 
@@ -736,7 +762,7 @@ class RecordManager:
             self.db.update_record(record_id, enabled=new_status)
             print_success(f"Record {action}d locally!")
             print_warning("Note: Provider not updated. Configure API credentials to sync.")
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, DatabaseError) as e:
             print_error(f"Error updating record: {e}")
             self.logger.error(f"Failed to {action} record {record_id}: {e}")
 
@@ -756,7 +782,7 @@ class RecordManager:
                 self._enable_record_at_provider(zone, provider, record)
             else:
                 self._disable_record_at_provider(zone, provider, record)
-        except (ValueError, TypeError, KeyError, APIError) as e:
+        except (ValueError, TypeError, KeyError, APIError, DatabaseError) as e:
             print_error(f"Error during {action}: {e}")
             self.logger.error(f"Failed to {action} record {record['id']}: {e}")
             print_warning("Record state may be inconsistent. Use 'Sync records from provider' to reconcile.")
@@ -848,7 +874,9 @@ class RecordManager:
 
             self.db.delete_record(record['id'])
             print_success(f"Record '{record['record_name']}' deleted successfully!")
-        except (ValueError, TypeError) as e:
+            if self.config.dns_update_method == UpdateMethod.DYNDNS:
+                self._sync_dyndns_bundle_if_needed(zone['id'])
+        except (ValueError, TypeError, APIError, DatabaseError) as e:
             print_error(f"Error deleting record: {e}")
             self.logger.error(f"Failed to delete record {record['id']}: {e}")
 
@@ -901,7 +929,7 @@ class RecordManager:
         except ZoneNotFoundError as e:
             print_error(f"Zone not found at provider: {e}")
             self.logger.error(f"Zone not found during sync: {e}")
-        except (ValueError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError, DatabaseError) as e:
             print_error(f"Error during zone sync: {e}")
             self.logger.error(f"Failed to sync zone {zone['id']}: {e}")
 
@@ -1193,7 +1221,7 @@ class RecordManager:
             print_success("Synced zone with provider")
             self.logger.info(f"Synced provider_zone_id for zone {zone['zone_name']}: {provider_zone['id']}")
             return True
-        except (APIError, ZoneNotFoundError, KeyError, TypeError) as e:
+        except (APIError, ZoneNotFoundError, DatabaseError, KeyError, TypeError) as e:
             print_error(f"Zone sync failed: {e}")
             self.logger.error(f"Failed to sync zone {zone['zone_name']}: {e}")
             return False
@@ -1220,7 +1248,7 @@ class RecordManager:
             local_records = self.db.get_records_by_zone(zone['id'], enabled_only=False)
             self._reconcile_local_records_to_provider(local_records, provider_records, zone['zone_name'], stats)
             return stats
-        except (ZoneNotFoundError, APIError, ValueError, KeyError, TypeError) as e:
+        except (ZoneNotFoundError, APIError, DatabaseError, ValueError, KeyError, TypeError) as e:
             self.logger.error(f"Failed to sync zone records with provider: {e}")
             return {}
 
@@ -1263,6 +1291,39 @@ class RecordManager:
             self.db.update_record(record['id'], provider_record_id=None, sync_status=SyncStatus.ORPHANED)
 
 
+    def _sync_dyndns_bundle_if_needed(self, zone_id: int) -> None:
+        """Synchronize native DynDNS bundle domains with provider after local record modifications.
+
+        Args:
+            zone_id: Database zone ID.
+        """
+        if self.config.dns_update_method != UpdateMethod.DYNDNS:
+            return
+
+        zone = self.db.get_zone_by_id(zone_id)
+        dyndns_config = self.db.get_dyndns_config_by_zone(zone_id)
+        if not zone or not dyndns_config:
+            return
+
+        zone_dict = dict(zone)
+        provider = self._create_provider_client(zone_dict, dict(dyndns_config))
+        if not provider:
+            return
+
+        try:
+            network = NetworkData(config=self.config, logger=self.logger)
+            network.load_current_ip_addresses()
+            handler = DynDNSBundleHandler(self.config, self.db, network, self.logger)
+            print_info(f"Synchronizing DynDNS bundle on provider for '{zone_dict['zone_name']}'...")
+            update_url = handler.sync_or_activate_dyndns_bundle(provider, zone_dict, force_sync=True)
+            if update_url and provider.execute_dyndns_update_url(
+                update_url, ipv4=network.ipv4_address, ipv6=network.ipv6_address
+            ):
+                print_success("Synchronized DynDNS bundle and verified updateUrl on provider.")
+        except DynDNSException as e:
+            print_warning(f"Failed to synchronize DynDNS bundle: {e}")
+
+
     def _process_zone_records(self, zone: Dict[str, Any], provider: ProviderDNSClient, network: NetworkData, stats: Dict[str, int]) -> None:
         """Process all records for a specific zone.
 
@@ -1275,6 +1336,10 @@ class RecordManager:
         records = self.db.get_records_by_zone(zone['id'], enabled_only=True)
         if not records:
             return
+
+        if self.config.dns_update_method == UpdateMethod.DYNDNS:
+            if self._process_dyndns_zone_records(zone, records, provider, network, stats):
+                return
 
         for record_row in records:
             record = row_to_dict(record_row)
@@ -1295,6 +1360,71 @@ class RecordManager:
                 stats[UpdateStatus.UPDATED] += 1
             else:
                 stats[UpdateStatus.FAILED] += 1
+
+
+    def _process_dyndns_zone_records(
+        self,
+        zone: Dict[str, Any],
+        records: List[Dict[str, Any]],
+        provider: ProviderDNSClient,
+        network: NetworkData,
+        stats: Dict[str, int],
+    ) -> bool:
+        """Process zone records using native DynDNS bundle updateUrl.
+
+        Args:
+            zone: Zone dictionary.
+            records: List of enabled record dictionaries for the zone.
+            provider: Provider client.
+            network: NetworkData instance.
+            stats: Statistics dictionary.
+
+        Returns:
+            True if handled via DynDNS updateUrl, False to fall back to REST.
+        """
+        if not self.db.get_dyndns_config_by_zone(zone['id']):
+            return False
+
+        handler = DynDNSBundleHandler(self.config, self.db, network, self.logger)
+        print_info(f"Verifying/synchronizing DynDNS bundle for '{zone['zone_name']}'...")
+        update_url = handler.sync_or_activate_dyndns_bundle(provider, zone)
+        if not update_url:
+            return False
+
+        print_info("Executing native DynDNS update via updateUrl...")
+        if not provider.execute_dyndns_update_url(
+            update_url, ipv4=network.ipv4_address, ipv6=network.ipv6_address
+        ):
+            print_warning("Native DynDNS updateUrl request failed. Falling back to REST API record updates.")
+            return False
+
+        print_success("Native DynDNS update URL executed successfully.")
+        self._apply_dyndns_record_updates(records, network, stats)
+        return True
+
+
+    def _apply_dyndns_record_updates(
+        self, records: List[Dict[str, Any]], network: NetworkData, stats: Dict[str, int]
+    ) -> None:
+        """Update local IP state and audit history after successful DynDNS bundle update.
+
+        Args:
+            records: List of enabled record dictionaries.
+            network: NetworkData instance.
+            stats: Statistics dictionary.
+        """
+        for record_row in records:
+            record = row_to_dict(record_row)
+            stats[UpdateStatus.TOTAL] += 1
+            new_ip = self._get_target_ip(record, network)
+            if new_ip:
+                old_ip = self._get_current_ip(record)
+                self.db.update_ip_address(record['id'], new_ip, changed=True)
+                self.db.log_dns_update(record['id'], old_ip, new_ip, UpdateStatus.SUCCESS)
+                stats[UpdateStatus.UPDATED] += 1
+                print_success(f"  Updated {record['record_name']} ({record['record_type']}) -> {new_ip}")
+            else:
+                stats[UpdateStatus.SKIPPED] += 1
 
 
     def _get_target_ip(self, record: Dict[str, Any], network: NetworkData) -> Optional[str]:
@@ -1394,7 +1524,7 @@ class RecordManager:
                 return True
 
             return self._create_provider_record_and_update(record, zone, provider)
-        except (ValueError, KeyError, TypeError, APIError, ZoneNotFoundError) as e:
+        except (ValueError, KeyError, TypeError, APIError, ZoneNotFoundError, DatabaseError) as e:
             print_error(f"{record['record_name']} ({record['record_type']}) - Sync failed: {e}")
             self.logger.error(f"Provider sync failed for record {record['id']}: {e}")
             return False
@@ -1446,7 +1576,7 @@ class RecordManager:
                 return True
             self.logger.error("Provider API returned failure for record creation")
             return False
-        except (ValueError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError, APIError) as e:
             self.logger.error(f"Failed to create record '{record['record_name']}': {e}")
             return False
 
@@ -1483,7 +1613,7 @@ class RecordManager:
 
             self._save_dns_update_success(record, old_ip, new_ip)
             return True
-        except (ValueError, TypeError, APIError, ZoneNotFoundError) as e:
+        except (ValueError, TypeError, APIError, ZoneNotFoundError, DatabaseError) as e:
             self._save_dns_update_failure(record, old_ip, new_ip, e)
             return False
 

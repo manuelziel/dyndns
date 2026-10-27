@@ -1,11 +1,10 @@
 #!/bin/bash
+# setup.sh
 #
 # DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 # Enable strict error handling
 set -euo pipefail
@@ -31,7 +30,7 @@ source "${_DIR}/lib/setup/install.sh"
 source "${_DIR}/lib/setup/menu.sh"
 
 # Load optional modules based on configuration
-if [[ ${ENABLE_PYTHON:-0} -eq 1 ]]; then
+if [[ "${ENABLE_PYTHON:-0}" -eq 1 ]]; then
     source "${_DIR}/lib/modules/python.sh"
 fi
 
@@ -40,6 +39,7 @@ QUIET_MODE=0
 FORCE_MODE=0
 SKIP_DEPENDENCIES=0
 PURGE_MODE=0
+DEBUG_MODE=0
 ACTION=""
 
 ################################################################################
@@ -162,6 +162,9 @@ parse_arguments() {
                 shift
                 ;;
             --purge)
+                # --purge is both a flag (used with uninstall) and a shortcut
+                # action. Set ACTION too so `setup.sh --purge` alone actually
+                # purges instead of falling through to interactive mode.
                 PURGE_MODE=1
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="purge"

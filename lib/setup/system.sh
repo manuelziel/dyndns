@@ -1,12 +1,10 @@
 #!/bin/bash
 # lib/setup/system.sh
 #
-# # DynDNS
+# DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
-#
-# This program is free software: you can redistribute it and/or modify
 
 ################################################################################
 # SYSTEM DETECTION & CHECKS

@@ -11,19 +11,19 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-# Standard Imports
 from typing import Any
 
-# Local Imports
 from .menu import ConfigMenu as BaseMenu
 from .importer import ConfigImporter
 from .exporter import ConfigExporter
 from .zones import ZoneManager
 from .records import RecordManager
+from .settings import SettingsManager
 from src.cli.constants import MenuChoices, MenuLabels
 from .helpers.output import print_error, print_section
 from .helpers.input import wait_for_enter
 from .status import StatusDisplay
+from src.core.exceptions import DatabaseError
 
 ################################################################################
 # CONFIGURATION MENU IMPLEMENTATION
@@ -47,8 +47,11 @@ class ConfigMenu(BaseMenu):
             logger: Logger instance.
         """
         super().__init__(config, logger)
+        if not self.db.check_schema_compatibility():
+            raise DatabaseError("Database schema validation or migration failed.")
         self.zone_manager = ZoneManager(config, logger, self.db)
         self.record_manager = RecordManager(config, logger, self.db)
+        self.settings_manager = SettingsManager(config, logger)
 
 
     def print_menu(self) -> int:
@@ -74,21 +77,28 @@ class ConfigMenu(BaseMenu):
         Args:
             choice: Selected option key.
         """
-        if choice == MenuChoices.MANAGE_ZONES:
+        if choice == MenuChoices.VIEW_IP:
+            self.view_status()
+        elif choice == MenuChoices.MANAGE_ZONES:
             self.manage_zones()
         elif choice == MenuChoices.MANAGE_RECORDS:
             self.manage_records()
-        elif choice == MenuChoices.VIEW_IP:
-            self.view_status()
         elif choice == MenuChoices.FORCE_UPDATE:
             self.force_dns_update()
-        elif choice == MenuChoices.IMPORT:
-            self.import_config()
+        elif choice == MenuChoices.SETTINGS:
+            self.manage_settings()
         elif choice == MenuChoices.EXPORT:
             self.export_config()
+        elif choice == MenuChoices.IMPORT:
+            self.import_config()
         else:
             print_error("Invalid choice!")
             wait_for_enter()
+
+
+    def manage_settings(self) -> None:
+        """Manage global DNS application settings."""
+        self.settings_manager.manage_settings()
 
 
     def manage_zones(self) -> None:

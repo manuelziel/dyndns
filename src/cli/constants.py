@@ -15,14 +15,6 @@ License: MIT
 """
 
 ################################################################################
-# IMPORTS & DEPENDENCIES
-################################################################################
-
-# Local Imports
-from ..core.constants import ExportFormat
-
-
-################################################################################
 # CLI MENU EXTENSIONS - Submenu Choices & Prompts
 ################################################################################
 
@@ -50,9 +42,9 @@ class ZoneMenuChoices:
 class EditZoneMenuChoices:
     """Namespace for zone editing menu choices."""
     EXIT = '0'
-    CHANGE_API_KEY = '1'
-    CHANGE_SECRET = '2'
-    TOGGLE_IPV4_V6 = '3'
+    UPDATE_ZONE_ID = '1'
+    UPDATE_CREDENTIALS = '2'
+    TOGGLE_STATUS = '3'
 
 
 class RecordMenuChoices:
@@ -79,27 +71,48 @@ class SetupMenuChoices:
     ROOT_ONLY = '2'
 
 
+class SettingsMenuChoices:
+    """Namespace for DNS settings menu choices."""
+    EXIT = '0'
+    UPDATE_METHOD = '1'
+    DEFAULT_TTL = '2'
+
+
+class UpdateMethodMenuChoices:
+    """Namespace for update method selection choices."""
+    CANCEL = '0'
+    DYNDNS = '1'
+    REST = '2'
+
+
 class MenuChoices:
     """Namespace for main menu choices."""
     EXIT = '0'
-    MANAGE_ZONES = '1'
-    MANAGE_RECORDS = '2'
-    VIEW_IP = '3'
+    VIEW_IP = '1'
+    MANAGE_ZONES = '2'
+    MANAGE_RECORDS = '3'
     FORCE_UPDATE = '4'
-    IMPORT = '5'
+    SETTINGS = '5'
     EXPORT = '6'
+    IMPORT = '7'
 
 
 class MenuLabels:
     """Namespace for menu item labels."""
     
     MAIN_MENU = {
-        MenuChoices.MANAGE_ZONES: "Manage Zones (Domains)",
-        MenuChoices.MANAGE_RECORDS: "Manage DNS Records",
         MenuChoices.VIEW_IP: "View Current Status",
-        MenuChoices.FORCE_UPDATE: "Force DNS Update (Re-sync All Records)",
-        MenuChoices.IMPORT: "Import Configuration",
+        MenuChoices.MANAGE_ZONES: "Manage Zones",
+        MenuChoices.MANAGE_RECORDS: "Manage DNS Records",
+        MenuChoices.FORCE_UPDATE: "Force DNS Update",
+        MenuChoices.SETTINGS: "Configure DNS Settings",
         MenuChoices.EXPORT: "Export Configuration",
+        MenuChoices.IMPORT: "Import Configuration",
+    }
+    
+    SETTINGS_MENU = {
+        SettingsMenuChoices.UPDATE_METHOD: "Change Update Method",
+        SettingsMenuChoices.DEFAULT_TTL: "Change Default TTL",
     }
     
     ZONE_MENU = {
@@ -110,9 +123,9 @@ class MenuLabels:
     }
     
     EDIT_ZONE_MENU = {
-        EditZoneMenuChoices.CHANGE_API_KEY: "Update Zone ID",
-        EditZoneMenuChoices.CHANGE_SECRET: "Update API Credentials (Bulk ID + API Key)",
-        EditZoneMenuChoices.TOGGLE_IPV4_V6: "Enable/Disable Zone",
+        EditZoneMenuChoices.UPDATE_ZONE_ID: "Update Zone ID",
+        EditZoneMenuChoices.UPDATE_CREDENTIALS: "Update API Credentials",
+        EditZoneMenuChoices.TOGGLE_STATUS: "Enable/Disable Zone",
     }
     
     RECORD_MENU = {
@@ -124,8 +137,20 @@ class MenuLabels:
     }
     
     EDIT_RECORD_MENU = {
-        EditRecordMenuChoices.TTL: "TTL (Time To Live)",
+        EditRecordMenuChoices.TTL: "TTL",
         EditRecordMenuChoices.STATUS: "Enable/Disable record",
+    }
+
+
+class UpdateMethodLabels:
+    """Namespace for update method menu labels and descriptions."""
+    DYNDNS_DESC = "recommended"
+    REST_DESC = "fallback / single records"
+    UNKNOWN_DESC = "unknown"
+    
+    MENU_OPTIONS = {
+        UpdateMethodMenuChoices.DYNDNS: ("dyndns", "Native IONOS DynDNS API (recommended)"),
+        UpdateMethodMenuChoices.REST: ("rest", "Classic REST API"),
     }
 
 
@@ -152,6 +177,7 @@ class CLIConfig:
     TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
     LABEL_WIDTH = 15
     MASK_LENGTH = 20
+    MAX_MASK_LENGTH = 64
     ZONE_NAME_WIDTH = 30
     RECORD_NAME_WIDTH = 40
     RECORD_TYPE_WIDTH = 5

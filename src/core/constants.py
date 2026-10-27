@@ -15,13 +15,6 @@ License: MIT
 """
 
 ################################################################################
-# IMPORTS & DEPENDENCIES
-################################################################################
-
-# Local Imports
-from .exceptions import ValidationError
-
-################################################################################
 # APPLICATION SETTINGS
 ################################################################################
 
@@ -36,7 +29,7 @@ class AppSettings:
         SOFTWARE_NAME: Name of the application.
         SYSLOG_IDENTIFIER: Systemd syslog identifier.
     """
-    VERSION = "1.0.3-alpha.6"
+    VERSION = "1.0.3-alpha.8"
     AUTHOR = "Manuel Ziel"
     EMAIL = "manuelziel@gmail.com"
     DESCRIPTION = "Dynamic DNS Client"
@@ -157,16 +150,14 @@ class PlaceholderIP:
             Placeholder IP address string.
 
         Raises:
-            ValidationError: If record_type is not supported.
+            ValueError: If record_type is not supported.
         """
         if record_type == RecordType.A:
             return cls.IPV4
         elif record_type == RecordType.AAAA:
             return cls.IPV6
         else:
-            raise ValidationError(f"Unsupported record type: {record_type}")
-
-
+            raise ValueError(f"Unsupported record type: {record_type}")
 
 
 ################################################################################
@@ -191,15 +182,23 @@ class HTTPStatus:
     Attributes:
         OK: Request succeeded (200).
         CREATED: Request succeeded and resource created (201).
+        NO_CONTENT: Request succeeded with no response content (204).
+        BAD_REQUEST: Malformed request or invalid parameters (400).
         UNAUTHORIZED: Authentication failed (401).
+        FORBIDDEN: Permission denied (403).
         NOT_FOUND: Resource not found (404).
         TOO_MANY_REQUESTS: Rate limit exceeded (429).
+        INTERNAL_SERVER_ERROR: Server encountered an error (500).
     """
     OK = 200
     CREATED = 201
+    NO_CONTENT = 204
+    BAD_REQUEST = 400
     UNAUTHORIZED = 401
+    FORBIDDEN = 403
     NOT_FOUND = 404
     TOO_MANY_REQUESTS = 429
+    INTERNAL_SERVER_ERROR = 500
 
 
 ################################################################################
@@ -317,19 +316,27 @@ class DatabaseDefaults:
     """Default values for SQLite database configuration.
 
     Attributes:
+        DB_SCHEMA_VERSION: Current database schema version.
+        UNVERSIONED_SCHEMA: Schema version 0 (unversioned/new).
         MAX_CONNECTIONS: Maximum connections in the pool.
         CONNECT_TIMEOUT: SQLite connect timeout in seconds.
+        BUSY_TIMEOUT: SQLite busy timeout in milliseconds.
         POOL_GET_TIMEOUT: Timeout to acquire a connection from pool.
         POOL_PUT_TIMEOUT: Timeout to return a connection to pool.
         MMAP_SIZE: Memory-mapped I/O size in bytes (256 MB).
         DB_TIMESTAMP_FORMAT: Timestamp format used for database entries.
+        DYNDNS_BUNDLE_ID_PREFIX: Key prefix in app_config for DynDNS bundle UUIDs.
     """
+    DB_SCHEMA_VERSION = 3
+    UNVERSIONED_SCHEMA = 0
     MAX_CONNECTIONS = 5
     CONNECT_TIMEOUT = 30.0
+    BUSY_TIMEOUT = 30000
     POOL_GET_TIMEOUT = 10.0
     POOL_PUT_TIMEOUT = 1.0
     MMAP_SIZE = 268435456
     DB_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+    DYNDNS_BUNDLE_ID_PREFIX = "dyndns_bundle_id_"
 
 
 ################################################################################
@@ -339,6 +346,13 @@ class DatabaseDefaults:
 class DNSDefaults:
     """Namespace for default DNS settings."""
     DEFAULT_TTL = 3600  # seconds
+    DEFAULT_UPDATE_METHOD = "dyndns"
+
+
+class UpdateMethod:
+    """Namespace for DNS update method options."""
+    DYNDNS = "dyndns"
+    REST = "rest"
 
 
 ################################################################################
@@ -362,7 +376,6 @@ class DaemonDefaults:
     CHECK_INTERVAL = 300  # seconds
     MAX_RETRIES = 3
     RETRY_DELAY = 60  # seconds
-    FORCE_UPDATE_INTERVAL = 86400  # seconds
     SYNC_CHECKS = True
     STOP_TIMEOUT = 30  # seconds
     STOP_CHECK_INTERVAL = 1  # seconds
@@ -409,3 +422,20 @@ class NetworkAPI:
     TIMEOUT = 10  # seconds
     RETRY_ATTEMPTS = 3
     RETRY_DELAY = 2  # seconds
+
+
+################################################################################
+# EXCEPTION DEFAULTS - Default Exception Messages
+################################################################################
+
+class ExceptionMessages:
+    """Default error messages for custom exceptions."""
+    DEFAULT = "An application error occurred"
+    DATABASE = "Database operation failed"
+    CONFIG = "Configuration error"
+    ENCRYPTION = "Encryption operation failed"
+    NETWORK = "Network operation failed"
+    API = "Provider API communication failed"
+    RECORD_NOT_FOUND = "DNS record not found on provider"
+    ZONE_NOT_FOUND = "DNS zone not found on provider"
+    VALIDATION = "Input validation failed"
