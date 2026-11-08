@@ -218,7 +218,8 @@ do_uninstall() {
 
 # Get systemd template unit files safely
 get_template_unit_files() {
-    local template_dir="${_DIR}/systemd"
+    local _dir="${_DIR:-"[DIR]"}"
+    local template_dir="${_dir}/systemd"
     if [[ ! -d "${template_dir}" ]]; then
         return 0
     fi
@@ -320,7 +321,8 @@ create_service_user() {
     local create_user="${SERVICE_CREATE_USER:-false}"
     local service_user="${SERVICE_USER:-root}"
     local service_group="${SERVICE_GROUP:-${service_user}}"
-    local user_home="${SERVICE_USER_HOME:-${VAR_LIB_DIR}}"
+    local var_lib_dir="${VAR_LIB_DIR:-"[VAR_LIB_DIR]"}"
+    local user_home="${SERVICE_USER_HOME:-"${var_lib_dir}"}"
     local user_shell="${SERVICE_USER_SHELL:-/usr/sbin/nologin}"
     local supplementary_groups="${SERVICE_SUPPLEMENTARY_GROUPS:-}"
     local group
@@ -575,7 +577,8 @@ install_single_item() {
 }
 
 setup_data_directories() {
-    if [[ ! -f "${CONFIG_FILE}" || -z "${DATA_DIR_CONFIG_KEYS:-}" ]]; then
+    local config_file="${CONFIG_FILE:-"[CONFIG_FILE]"}"
+    if [[ ! -f "${config_file}" || -z "${DATA_DIR_CONFIG_KEYS:-}" ]]; then
         return 0
     fi
 
@@ -585,7 +588,7 @@ setup_data_directories() {
     local key dir_value
 
     for key in ${DATA_DIR_CONFIG_KEYS}; do
-        dir_value=$(grep -E "^${key}\s*=" "${CONFIG_FILE}" 2>/dev/null \
+        dir_value=$(grep -E "^${key}\s*=" "${config_file}" 2>/dev/null \
             | sed 's/^[^=]*=\s*"//;s/"\s*$//' | head -1)
         if [[ -z "${dir_value}" ]]; then
             continue
@@ -613,11 +616,13 @@ setup_data_directories() {
 customize_systemd_unit() {
     local dest_path="$1"
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+    local share_dir="${SHARE_DIR:-"[SHARE_DIR]"}"
+    local software_dir_name="${SOFTWARE_DIR_NAME:-"[SOFTWARE_DIR_NAME]"}"
     local service_after="${SERVICE_AFTER:-network.target}"
     local service_wants="${SERVICE_WANTS:-}"
     local service_type="${SERVICE_TYPE:-simple}"
-    local service_exec_start="${SERVICE_EXEC_START:-/usr/bin/[executable-name]}"
-    local service_exec_stop="${SERVICE_EXEC_STOP:-/usr/bin/[executable-name] stop}"
+    local service_exec_start="${SERVICE_EXEC_START:-"[SERVICE_EXEC_START]"}"
+    local service_exec_stop="${SERVICE_EXEC_STOP:-"[SERVICE_EXEC_STOP]"}"
     local service_restart="${SERVICE_RESTART:-on-failure}"
     local service_restart_sec="${SERVICE_RESTART_SEC:-5}"
     local service_user="${SERVICE_USER:-root}"
@@ -642,8 +647,8 @@ customize_systemd_unit() {
         -e "s|{{SERVICE_TYPE}}|${service_type}|g" \
         -e "s|{{SERVICE_USER}}|${service_user}|g" \
         -e "s|{{SERVICE_GROUP}}|${service_group}|g" \
-        -e "s|{{SHARE_DIR}}|${SHARE_DIR}|g" \
-        -e "s|{{SOFTWARE_DIR_NAME}}|${SOFTWARE_DIR_NAME}|g" \
+        -e "s|{{SHARE_DIR}}|${share_dir}|g" \
+        -e "s|{{SOFTWARE_DIR_NAME}}|${software_dir_name}|g" \
         -e "s|{{RUNTIME_DIRECTORY_MODE}}|${runtime_dir_mode}|g" \
         -e "s|{{SERVICE_UMASK}}|${service_umask}|g" \
         -e "s|{{SERVICE_SUPPLEMENTARY_GROUPS}}|${service_supplementary_groups}|g" \
@@ -706,7 +711,8 @@ deploy_single_systemd_unit() {
 
 create_service() {
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
-    local template_dir="${_DIR}/systemd"
+    local _dir="${_DIR:-"[DIR]"}"
+    local template_dir="${_dir}/systemd"
 
     if [[ -z "${service_name}" ]] || [[ "${service_name}" == "[SERVICE_NAME]" ]]; then
         print_info "No service configuration needed (${service_name} not configured)"

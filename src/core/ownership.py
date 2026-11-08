@@ -34,7 +34,7 @@ import pwd
 import grp
 from typing import Optional, Any
 
-from .constants import EnvKeys, SystemDefaults
+from .constants import OwnershipDefaults, EnvKeys
 
 
 ################################################################################
@@ -65,12 +65,11 @@ def ensure_service_ownership(
     """
     if os.geteuid() != 0 or not os.path.exists(path):
         return False
-
     service_user = os.environ.get(EnvKeys.SERVICE_USER, "").strip()
-    if not service_user or service_user == SystemDefaults.ROOT_USER:
+    if not service_user or service_user in (OwnershipDefaults.ROOT_USER, OwnershipDefaults.PLACEHOLDER_USER):
         return False
-    service_group = os.environ.get(EnvKeys.SERVICE_GROUP, "").strip() or service_user
-
+    raw_group = os.environ.get(EnvKeys.SERVICE_GROUP, "").strip()
+    service_group = service_user if not raw_group or raw_group == OwnershipDefaults.PLACEHOLDER_GROUP else raw_group
     try:
         uid = pwd.getpwnam(service_user).pw_uid
         gid = grp.getgrnam(service_group).gr_gid
@@ -78,15 +77,18 @@ def ensure_service_ownership(
         if logger:
             logger.debug(f"Service user/group not found: {service_user}:{service_group}")
         return False
-
-    if mode is None:
-        mode = SystemDefaults.DIR_MODE_GROUP_WRITE if os.path.isdir(path) else SystemDefaults.FILE_MODE_GROUP_WRITE
     try:
         os.chown(path, uid, gid)
+    except OSError as exc:
+        if logger:
+            logger.warning(f"Failed to chown {path} to {service_user}: {exc}")
+        return False
+    if mode is None:
+        mode = OwnershipDefaults.DIR_MODE_GROUP_WRITE if os.path.isdir(path) else OwnershipDefaults.FILE_MODE_GROUP_WRITE
+    try:
         os.chmod(path, mode)
     except OSError as exc:
         if logger:
-            logger.warning(f"Failed to update ownership/permissions on {path}: {exc}")
+            logger.warning(f"Failed to chmod {path}: {exc}")
         return False
-
     return True

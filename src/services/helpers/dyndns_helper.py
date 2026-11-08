@@ -308,28 +308,52 @@ class DynDNSBundleHandler:
         """
         updates_succeeded, updates_failed = 0, 0
         for record in target_records:
-            old_ip = record.get("old_ip")
             new_ip = record.get("new_ip") or (
                 self.network.ipv4_address if record["record_type"] == RecordType.A else self.network.ipv6_address
             )
-            try:
-                self.database.update_ip_address(record["id"], ip_address=new_ip, changed=bool(record.get("needs_update")))
-                self.database.update_sync_status(record["id"], SyncStatus.SYNCED)
+            if not new_ip:
+                continue
+            if self._persist_dyndns_record_update(record, new_ip):
                 if record.get("needs_update"):
-                    self.database.log_dns_update(
-                        record_id=record["id"], old_ip=old_ip, new_ip=new_ip, status=UpdateStatus.SUCCESS
-                    )
                     updates_succeeded += 1
-                    self.logger.success(
-                        f"[DYNDNS TRIGGERED] Record '{record['record_name']}' ({record['record_type']}) updated: "
-                        f"{old_ip or 'none'} {LOG_SYMBOLS['ARROW']} {new_ip}"
-                    )
-                else:
-                    self.logger.debug(f"Record '{record['record_name']}' ({record['record_type']}) verified via DynDNS URL ({new_ip})")
-            except DatabaseError as e:
-                self.logger.error(f"Database error updating '{record['record_name']}': {e}")
+            else:
                 updates_failed += 1
         return updates_succeeded, updates_failed
+
+
+    def _persist_dyndns_record_update(
+        self, record: Dict[str, Any], new_ip: str
+    ) -> bool:
+        """Persist a single record's IP and status after a successful DynDNS URL update.
+
+        Args:
+            record: Record dictionary.
+            new_ip: Target IP address.
+
+        Returns:
+            True if persisted without database error, False otherwise.
+        """
+        old_ip = record.get("old_ip")
+        try:
+            self.database.update_ip_address(record["id"], ip_address=new_ip, changed=bool(record.get("needs_update")))
+            if record.get("sync_status") != SyncStatus.SYNCED:
+                self.database.update_sync_status(record["id"], SyncStatus.SYNCED)
+            if record.get("needs_update"):
+                self.database.log_dns_update(
+                    record_id=record["id"], old_ip=old_ip, new_ip=new_ip, status=UpdateStatus.SUCCESS
+                )
+                self.logger.success(
+                    f"[DYNDNS TRIGGERED] Record '{record['record_name']}' ({record['record_type']}) updated: "
+                    f"{old_ip or 'none'} {LOG_SYMBOLS['ARROW']} {new_ip}"
+                )
+            else:
+                self.logger.debug(
+                    f"Record '{record['record_name']}' ({record['record_type']}) verified via DynDNS URL ({new_ip})"
+                )
+            return True
+        except DatabaseError as e:
+            self.logger.error(f"Database error updating '{record['record_name']}': {e}")
+            return False
 
 
     def reset_cached_url(self, zone_id: int, zone_name: str) -> bool:

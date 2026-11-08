@@ -11,8 +11,8 @@
 ################################################################################
 
 readonly AUTHOR="Manuel Ziel"
-readonly VERSION="1.0.3-alpha.8"
-readonly LAST_MODIFIED="2026-10-26"
+readonly VERSION="1.0.3"
+readonly LAST_MODIFIED="2026-11-08"
 readonly SOFTWARE_NAME="DynDNS"
 readonly SOFTWARE_DESCRIPTION="Dynamic DNS Client for IONOS"
 
@@ -33,6 +33,7 @@ readonly SHARE_DIR="/usr/local/share/${SOFTWARE_DIR_NAME}"          # Software-s
 export SHARE_DIR                                                    # Export for modules that need it
 readonly ETC_DIR="/etc/${SOFTWARE_DIR_NAME}"                        # Software-specific config directory
 readonly VAR_LIB_DIR="/var/lib/${SOFTWARE_DIR_NAME}"                # Application data directory
+readonly DATA_DIR="${VAR_LIB_DIR}"                                  # FHS 3.0 data directory alias for Python
 
 # Runtime file paths - FHS compliant.
 # Uses /run/<name>/ subdirectory, created by systemd RuntimeDirectory=<name>
@@ -162,11 +163,6 @@ readonly DATA_DIR_CONFIG_KEYS=""                                        # e.g. "
 # Service paths
 readonly SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 
-# Configuration and data directories
-readonly CONFIG_DIR="${HOME}/.config/${SOFTWARE_DIR_NAME}"
-readonly DATA_DIR="${HOME}/.local/share/${SOFTWARE_DIR_NAME}"
-readonly SLOTS_FILE="${CONFIG_DIR}/slots.conf"
-
 # Current user
 readonly CURRENT_USER="$(whoami)"
 
@@ -246,6 +242,7 @@ fi
 readonly VENV_DIR="${VAR_LIB_DIR}/venv"                                 # Virtual environment location (writable runtime state)
 export VENV_DIR                                                         # Export for Python subprocess
 export DATA_DIR                                                         # Export for Python subprocess
+export RUNTIME_DIR                                                      # Export for Python subprocess
 export CONFIG_FILE                                                      # Export for Python subprocess
 export PID_FILE                                                         # Export for Python subprocess
 readonly PYTHON_INSTALLED_SRC_DIR="${SHARE_DIR}/src"                    # Python source modules

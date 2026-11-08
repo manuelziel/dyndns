@@ -113,12 +113,12 @@ export_python_environment() {
     fi
 
     # Export Python-related environment variables
-    # Note: PID_FILE, CONFIG_FILE, DATA_DIR, VENV_DIR already exported in config.sh
+    # Note: PID_FILE, CONFIG_FILE, DATA_DIR, RUNTIME_DIR, VENV_DIR already exported in config.sh
     if [[ -n "${python_src_dir}" ]]; then
         export PYTHON_SRC_DIR="${python_src_dir}"
     fi
 
-    if [[ "${debug:-0}" -eq 1 || "${DEBUG:-0}" -eq 1 ]]; then
+    if [[ "${debug:-0}" -eq 1 ]]; then
         export DEBUG=1
     fi
     if [[ "${verbose:-0}" -eq 1 ]]; then
@@ -148,7 +148,7 @@ export_python_environment() {
 
 start_python_application() {
     local enable_python="${ENABLE_PYTHON:-0}"
-    local python_script="${PYTHON_SCRIPT:-"${BIN_DIR}/${SOFTWARE_DIR_NAME}.py"}"
+    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
     local daemon_mode="${DAEMON_MODE:-0}"
     local init_delay=3
 
@@ -179,7 +179,7 @@ start_python_application() {
         local python_pid=$!
 
         # Save PID to file with safety checks
-        local pid_file="${PID_FILE}"
+        local pid_file="${PID_FILE:-"[PID_FILE]"}"
         if [[ -n "${pid_file}" ]]; then
             local pid_dir="$(dirname "${pid_file}")"
             # Try to create the runtime directory if missing (for manual runs;
@@ -230,8 +230,8 @@ start_python_application() {
 #        start_python_cli "export" "--output" "backup.yaml"
 start_python_cli() {
     local enable_python="${ENABLE_PYTHON:-0}"
-    local python_script="${PYTHON_SCRIPT:-"${BIN_DIR}/${SOFTWARE_DIR_NAME}.py"}"
-    local venv_dir="${VENV_DIR:-}"
+    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
+    local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
     local python_bin="python3"
     local cli_command="$1"
     local exit_code
@@ -309,12 +309,12 @@ rebuild_python_environment() {
         return 1
     fi
 
-    if [[ "${EUID}" -eq 0 && -n "${service_user}" && "${service_user}" != "root" && "${service_user}" != "[SERVICE_USER]" ]]; then
+    if [[ "${EUID}" -eq 0 && -n "${service_user}" && "${service_user}" != "root" && -d "${venv_dir}" ]]; then
         if getent passwd "${service_user}" >/dev/null 2>&1; then
             chown -R "${service_user}:${service_group}" "${venv_dir}" 2>/dev/null || true
         fi
     fi
 
-    print_success "Virtual environment rebuilt successfully"
+    print_success "Python virtual environment rebuilt successfully"
     return 0
 }

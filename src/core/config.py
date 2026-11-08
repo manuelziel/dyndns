@@ -185,16 +185,19 @@ class ConfigManager:
         """Load database configuration with FHS-compliant path resolution.
 
         Resolves database path from configuration. Absolute paths are used
-        directly, relative paths are resolved against DEFAULT_DATA_DIR.
+        directly, relative paths are resolved against DATA_DIR.
 
         Args:
             current_dir: Base directory (unused, kept for API compatibility).
         """
+        data_dir = os.environ.get("DATA_DIR", AppPaths.DATA_DIR)
+        self.data_dir = data_dir
         db_path = self.config.get("database", {}).get("db_path", AppPaths.DB_FILE)
-        self.db_path = db_path if os.path.isabs(db_path) else os.path.join(AppPaths.DATA_DIR, db_path)
-        
+        self.db_path = db_path if os.path.isabs(db_path) else os.path.join(data_dir, db_path)
+        self.runtime_dir = os.environ.get("RUNTIME_DIR", AppPaths.RUNTIME_DIR)
+
         key_file = self.config.get("database", {}).get("encryption_key_path", AppPaths.ENCRYPTION_KEY_FILE)
-        self.encryption_key_path = key_file if os.path.isabs(key_file) else os.path.join(AppPaths.DATA_DIR, key_file)
+        self.encryption_key_path = key_file if os.path.isabs(key_file) else os.path.join(data_dir, key_file)
 
 
     ############################################################################

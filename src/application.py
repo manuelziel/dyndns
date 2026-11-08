@@ -316,8 +316,15 @@ class Application:
             records_from_db = self.database.get_records_by_zone(zone["id"], enabled_only=True)
             zone["records"] = [dict(record) for record in records_from_db]
             for record in zone["records"]:
-                current_ip = self.database.get_ip_address(record["id"])
-                record["current_ip"] = dict(current_ip) if current_ip else None
+                record["current_ip"] = (
+                    {
+                        "ip_address": record["ip_address"],
+                        "last_checked_at": record.get("last_checked_at"),
+                        "last_changed_at": record.get("last_changed_at"),
+                    }
+                    if record.get("ip_address")
+                    else None
+                )
                 total_records += 1
             self.logger.debug(f"Loaded zone '{zone['zone_name']}' with {len(zone['records'])} records")
 

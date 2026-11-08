@@ -224,21 +224,13 @@ class LoggerManager:
             Configured logging.Logger instance with handlers.
         """
         running_under_systemd = bool(
-            os.environ.get('INVOCATION_ID') or os.environ.get('JOURNAL_STREAM') or os.environ.get('DAEMON_MODE') == '1'
+            os.environ.get('INVOCATION_ID')
+            or os.environ.get('JOURNAL_STREAM')
+            or os.environ.get('DAEMON_MODE') == '1'
         )
         daemon_mode = kwargs.get('daemon_mode', running_under_systemd)
         console_colors = bool(kwargs.get('console_colors', LoggingDefaults.CONSOLE_COLORS))
-
-        log_level = kwargs.get('level', None)
-        if log_level is not None and isinstance(log_level, str):
-            log_level = getattr(logging, log_level.upper(), logging.INFO)
-        if log_level is None:
-            if os.environ.get('DEBUG', '0') == '1':
-                log_level = logging.DEBUG
-            elif os.environ.get('VERBOSE', '0') == '1':
-                log_level = logging.INFO
-            else:
-                log_level = logging.WARNING
+        log_level = cls._resolve_log_level(kwargs.get('level', None))
 
         logger = logging.getLogger(name)
         logger.setLevel(log_level)
@@ -249,6 +241,26 @@ class LoggerManager:
         cls._setup_journal_handler(logger, name, log_level)
         cls._setup_live_logging()
         return logger
+
+    @classmethod
+    def _resolve_log_level(cls, level: Any) -> int:
+        """Resolve numeric logging level from explicit argument or environment.
+
+        Args:
+            level: Optional explicit level (int or level name string).
+
+        Returns:
+            Numeric logging level constant.
+        """
+        if level is not None:
+            if isinstance(level, str):
+                return getattr(logging, level.upper(), logging.INFO)
+            return int(level)
+        if os.environ.get('DEBUG', '0') == '1':
+            return logging.DEBUG
+        if os.environ.get('VERBOSE', '0') == '1':
+            return logging.INFO
+        return logging.WARNING
     
     @classmethod
     def _setup_console_handler(
@@ -320,7 +332,7 @@ class LoggerManager:
 # Add SUCCESS log level
 logging.addLevelName(LoggingDefaults.SUCCESS_LEVEL, 'SUCCESS')
 
-def success(self, message: str, *args: Any, **kwargs: Any) -> None:
+def success(self: logging.Logger, message: object, *args: Any, **kwargs: Any) -> None:
     """Log a success message at SUCCESS level (25).
 
     Custom log level between INFO (20) and WARNING (30) for indicating

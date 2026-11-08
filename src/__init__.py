@@ -43,6 +43,7 @@ __syslog_identifier__ = AppSettings.SYSLOG_IDENTIFIER
 from .core import (
     DynDNSException,
     DatabaseError,
+    DatabaseLockedError,
     ConfigError,
     EncryptionError,
     NetworkError,
@@ -75,6 +76,7 @@ __all__ = [
     # Exceptions
     'DynDNSException',
     'DatabaseError',
+    'DatabaseLockedError',
     'ConfigError',
     'EncryptionError',
     'NetworkError',

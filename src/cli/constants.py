@@ -97,6 +97,13 @@ class MenuChoices:
     IMPORT = '7'
 
 
+class PaginationChoices:
+    """Namespace for pagination navigation choices."""
+    NEXT = 'n'
+    PREV = 'p'
+    BACK = MenuChoices.EXIT
+
+
 class MenuLabels:
     """Namespace for menu item labels."""
     
@@ -181,6 +188,7 @@ class CLIConfig:
     ZONE_NAME_WIDTH = 30
     RECORD_NAME_WIDTH = 40
     RECORD_TYPE_WIDTH = 5
+    DEFAULT_PAGE_SIZE = 10
 
 
 ################################################################################

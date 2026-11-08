@@ -137,13 +137,13 @@ The daemon (`dyndns.service`) automatically verifies and heals your DNS configur
 - **Orphan Detection & Recovery (`dyndns` + `rest` modes)**: Detects if configured `A`/`AAAA` records (`@`, `www`, etc.) were deleted or modified on the IONOS provider dashboard → recreates missing entries automatically via REST API (`POST /v1/zones/{id}/records`).
 - **DynDNS Bundle Auto-Binding (`dyndns` mode)**: After restoring any missing subdomains on IONOS, the daemon automatically activates a fresh DynDNS `updateUrl` bundle (`bulkId`) and executes it immediately with your current IPv4/IPv6 so all recovered records get populated instantly.
 - **Provider ID Recovery**: Missing `provider_record_id` or out-of-sync local IDs → syncs zone → recreates or links records seamlessly.
-- **Real-Time CLI Execution**: Adding, editing, or deleting records inside `sudo dyndns config -> Option 2 (Manage zones) -> Option 3 (Manage Records)` immediately updates the IONOS DynDNS bundle and executes the `updateUrl` in real time. New subdomains go live within seconds without waiting for the next daemon check cycle.
+- **Real-Time CLI Execution**: Adding, editing, or deleting records inside `sudo dyndns config -> Option 2 (Manage Zones) / Option 3 (Manage DNS Records)` immediately updates the IONOS DynDNS bundle and executes the `updateUrl` in real time. New subdomains go live within seconds without waiting for the next daemon check cycle.
 
 ### Manual Sync Options
 
 **Zone Sync** - Reconcile database with provider:
 ```bash
-sudo dyndns config -> "2. Manage records" -> "5. Sync records from provider"
+sudo dyndns config -> "3. Manage DNS Records" -> "5. Sync records from provider"
 ```
 Use when: After import, manual changes at IONOS dashboard, or to verify sync status
 
@@ -203,7 +203,7 @@ In your router settings:
 
 #### 3. LAN Loopback & Split-Horizon DNS (`DNS-Rebind-Protection`)
 If your domain works externally (`Smartphone via 4G/5G`) but times out when accessed from inside your home network (`PC / Laptop`):
-- **Router Rebind Protection:** Add your domains (`yourdomain.com` and `www.yourdomain.com`) to the router's **DNS Rebind Protection**
+- **Router Rebind Protection:** Add your domains (`yourdomain.com` and `www.yourdomain.com`) to the router's **DNS Rebind Protection** exception list.
 
 ### Reinstall / Uninstall
 

@@ -158,7 +158,7 @@ get_installed_version() {
 
 service_exists() {
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
-    local service_path="${SERVICE_PATH:-"/etc/systemd/system/${service_name}"}"
+    local service_path="${SERVICE_PATH:-"[SERVICE_PATH]"}"
     
     if [[ -f "${service_path}" ]]; then
         return 0
@@ -331,11 +331,12 @@ show_service_status() {
 
 show_daemon_status() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-    local pid="$(cat "${PID_FILE}" 2>/dev/null)"
+    local pid_file="${PID_FILE:-"[PID_FILE]"}"
+    local pid="$(cat "${pid_file}" 2>/dev/null)"
     
     # If no PID file, try to find process
     if [[ -z "${pid}" ]]; then
-        local python_script="${PYTHON_SCRIPT}"
+        local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
         # Disable errexit: pgrep returns exit 1 when no processes found
         set +e
         pid=$(pgrep -f "^python3 .*${python_script}" | head -n1)

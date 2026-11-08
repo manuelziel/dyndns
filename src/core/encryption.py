@@ -23,11 +23,14 @@ License: MIT
 import os
 from typing import Optional, Any
 
-from cryptography.fernet import Fernet
+try:
+    from cryptography.fernet import Fernet
+except ImportError:
+    Fernet = None  # type: ignore[assignment]
 
+from .constants import EncryptionDefaults
 from .exceptions import EncryptionError, ValidationError
 from .ownership import ensure_service_ownership
-from .constants import SystemDefaults, EncryptionDefaults
 
 
 ################################################################################
@@ -150,15 +153,14 @@ class EncryptionManager:
         Raises:
             EncryptionError: If key loading or generation fails.
         """
+        if Fernet is None:
+            raise EncryptionError("cryptography package is required for EncryptionManager")
         try:
-            if os.path.exists(self.key_file):
-                self._load_existing_key()
-            else:
-                self._generate_new_key()
-
-            if len(self._encryption_key) != EncryptionDefaults.KEY_LENGTH:
+            self._encryption_key = self._load_or_generate_key()
+            expected_len = EncryptionDefaults.FERNET_KEY_LENGTH
+            if len(self._encryption_key) != expected_len:
                 raise ValidationError(
-                    f"Invalid encryption key length: {len(self._encryption_key)} (expected {EncryptionDefaults.KEY_LENGTH})"
+                    f"Invalid encryption key length: {len(self._encryption_key)} (expected {expected_len})"
                 )
             self._cipher = Fernet(self._encryption_key)
         except Exception as e:
@@ -166,28 +168,29 @@ class EncryptionManager:
                 self.logger.error(f"Encryption setup failed: {e}")
             raise EncryptionError(f"Failed to setup encryption: {e}")
 
+    def _load_or_generate_key(self) -> bytes:
+        """Load existing Fernet key from disk or generate and persist a new one.
 
-    def _load_existing_key(self) -> None:
-        """Load existing encryption key from file and enforce permissions."""
-        with open(self.key_file, 'rb') as f:
-            self._encryption_key = f.read()
-        current_perms = os.stat(self.key_file).st_mode & 0o777
-        if current_perms != SystemDefaults.KEY_FILE_MODE:
-            os.chmod(self.key_file, SystemDefaults.KEY_FILE_MODE)
+        Returns:
+            Raw Fernet key bytes.
+        """
+        key_mode = EncryptionDefaults.KEY_FILE_MODE
+        if os.path.exists(self.key_file):
+            with open(self.key_file, 'rb') as f:
+                key = f.read()
             if self.logger:
-                self.logger.warning(f"Fixed encryption key permissions: {self.key_file}")
-        ensure_service_ownership(self.key_file, mode=SystemDefaults.KEY_FILE_MODE, logger=self.logger)
+                self.logger.debug(f"Encryption key loaded from {self.key_file}")
+            ensure_service_ownership(self.key_file, mode=key_mode, logger=self.logger)
+            return key
 
-
-    def _generate_new_key(self) -> None:
-        """Generate a new Fernet key, write to disk, and enforce permissions."""
-        self._encryption_key = Fernet.generate_key()
-        key_dir = os.path.dirname(self.key_file)
-        if key_dir and not os.path.exists(key_dir):
-            os.makedirs(key_dir, mode=SystemDefaults.KEY_DIR_MODE, exist_ok=True)
-        with open(self.key_file, 'wb') as f:
-            f.write(self._encryption_key)
-        os.chmod(self.key_file, SystemDefaults.KEY_FILE_MODE)
-        ensure_service_ownership(self.key_file, mode=SystemDefaults.KEY_FILE_MODE, logger=self.logger)
+        key = Fernet.generate_key()
+        os.makedirs(os.path.dirname(self.key_file), exist_ok=True)
+        fd = os.open(self.key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, key_mode)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(key)
+        os.chmod(self.key_file, key_mode)
+        ensure_service_ownership(self.key_file, mode=key_mode, logger=self.logger)
         if self.logger:
-            self.logger.info(f"Generated new encryption key: {self.key_file}")
+            self.logger.info(f"Encryption key generated and saved to {self.key_file}")
+            self.logger.warning("IMPORTANT: Backup encryption key - data cannot be decrypted without it")
+        return key

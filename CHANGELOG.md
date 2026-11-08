@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.3] - 2026-11-08
+### Changed
+- Optimize SQLite database for SSD/SD-card wear-leveling and query performance
+- Update core modules and CLI helpers to match latest project standards
+
+### Security
+- Enforce strict `0600` file permissions when creating the encryption key
+
 ## [1.0.3-alpha.8] - 2026-10-27
 ### Changed
 - Clean up and standardize code and shell scripts across the project

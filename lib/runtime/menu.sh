@@ -141,7 +141,7 @@ show_interactive_menu() {
 show_help() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local version="${VERSION:-"[VERSION]"}"
-    local cmd_name="${SOFTWARE_DIR_NAME:-$(basename "$0")}"
+    local cmd_name="${SOFTWARE_DIR_NAME:-"[SOFTWARE_DIR_NAME]"}"
 
     print_section "${software_name} v${version}"
     echo ""
@@ -182,8 +182,8 @@ show_help() {
     echo "  ${cmd_name} --version            # Show version information"
     echo ""
     echo "View logs:"
-    echo "  sudo journalctl -u ${SERVICE_NAME:-${cmd_name}} -n 50 --no-pager"
-    echo "  sudo journalctl -u ${SERVICE_NAME:-${cmd_name}} -f"
+    echo "  sudo journalctl -u ${SERVICE_NAME:-"[SERVICE_NAME]"} -n 50 --no-pager"
+    echo "  sudo journalctl -u ${SERVICE_NAME:-"[SERVICE_NAME]"} -f"
     echo ""
 }
 

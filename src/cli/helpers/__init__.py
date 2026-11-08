@@ -14,7 +14,10 @@ License: MIT
 from .validate import (
     is_valid_domain,
     is_valid_ipv4,
-    is_valid_ipv6
+    is_valid_ipv6,
+    is_valid_path,
+    resolve_path,
+    is_valid_file_path,
 )
 
 from .output import (
@@ -42,11 +45,10 @@ from .input import (
     get_valid_int,
     get_valid_string,
     get_choice_from_list,
+    print_paginated_list,
     select_zone,
     select_record,
     get_zone_by_id_validated,
-    resolve_path,
-    is_valid_file_path
 )
 
 ################################################################################
@@ -62,6 +64,7 @@ __all__ = [
     'get_valid_int',
     'get_valid_string',
     'get_choice_from_list',
+    'print_paginated_list',
     'select_zone',
     'select_record',
     'get_zone_by_id_validated',
@@ -70,12 +73,12 @@ __all__ = [
     # Output
     'row_to_dict',
     'print_status',
+    'print_status_line',
     'print_success',
     'print_error',
     'print_warning',
     'print_info',
     'print_debug',
-    'print_status_line',
     'print_section',
     'print_subsection',
     'print_banner',
@@ -85,5 +88,6 @@ __all__ = [
     # Validate
     'is_valid_domain',
     'is_valid_ipv4',
-    'is_valid_ipv6'
+    'is_valid_ipv6',
+    'is_valid_path',
 ]

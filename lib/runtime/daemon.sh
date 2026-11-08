@@ -11,9 +11,9 @@
 ################################################################################
 
 is_running() {
-    local pid_file="${PID_FILE}"
+    local pid_file="${PID_FILE:-"[PID_FILE]"}"
     local pid
-    local python_script="${PYTHON_SCRIPT:-"${BIN_DIR}/${SOFTWARE_DIR_NAME}.py"}"
+    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
 
     # Check PID file first
     if [[ -f "${pid_file}" ]]; then
@@ -38,7 +38,7 @@ is_running() {
 ################################################################################
 
 remove_pid_file() {
-    local pid_file="${PID_FILE}"
+    local pid_file="${PID_FILE:-"[PID_FILE]"}"
 
     if [[ -f "${pid_file}" ]]; then
         rm -f "${pid_file}"

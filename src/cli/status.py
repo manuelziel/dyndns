@@ -122,17 +122,22 @@ class StatusDisplay:
             current_ipv4: Current public IPv4.
             current_ipv6: Current public IPv6.
         """
-        ip_info_row = self.db.get_ip_address(record['id'])
         record_name = record['record_name']
         record_type = record['record_type']
+        stored_ip = record.get('ip_address')
+        changed_at = record.get('last_changed_at')
+        if not stored_ip and 'ip_address' not in record:
+            ip_info_row = self.db.get_ip_address(record['id'])
+            if ip_info_row:
+                ip_info = row_to_dict(ip_info_row)
+                stored_ip = ip_info.get('ip_address')
+                changed_at = ip_info.get('last_changed_at')
 
-        if not ip_info_row:
+        if not stored_ip:
             print(f"  {record_name:<{CLIConfig.RECORD_NAME_WIDTH}s} {record_type:{CLIConfig.RECORD_TYPE_WIDTH}s} {Colors.DIM}○ (no IP stored yet){Colors.NC}")
             return
 
-        ip_info = row_to_dict(ip_info_row)
-        stored_ip = ip_info.get('ip_address', '')
-        changed_at = ip_info.get('last_changed_at', 'N/A')
+        changed_at = changed_at or 'N/A'
         current_ip = current_ipv4 if record_type == RecordType.A else current_ipv6
 
         if current_ip and stored_ip != current_ip:

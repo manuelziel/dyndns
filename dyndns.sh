@@ -100,7 +100,7 @@ parse_arguments() {
                     cleanup_and_exit 1
                 fi
                 ;;
-            setup-env|config)
+            setup-env)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
                     shift
@@ -111,7 +111,7 @@ parse_arguments() {
                 fi
                 ;;
             # CLI commands — pass remaining args to Python CLI
-            import|export)
+            config|import|export)
                 if [[ -z "${ACTION:-}" ]]; then
                     ACTION="$1"
                     shift

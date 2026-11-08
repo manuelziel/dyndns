@@ -314,11 +314,12 @@ class RecordManager:
             ttl = r.get('ttl', self.config.dns_default_ttl)
             print(f"  {idx:3d}. {r['record_name']:{CLIConfig.RECORD_NAME_WIDTH}s} {r['record_type']:{CLIConfig.RECORD_TYPE_WIDTH}s} TTL:{ttl:5d} [{status}]")
             if show_ip:
-                ip_row = self.db.get_ip_address(r['id'])
-                if ip_row:
-                    ip_info = row_to_dict(ip_row)
-                    if ip_info.get('ip_address'):
-                        print(f"     └─ Current IP: {ip_info['ip_address']}")
+                stored_ip = r.get('ip_address')
+                if not stored_ip and 'ip_address' not in r:
+                    ip_row = self.db.get_ip_address(r['id'])
+                    stored_ip = row_to_dict(ip_row).get('ip_address') if ip_row else None
+                if stored_ip:
+                    print(f"     └─ Current IP: {stored_ip}")
 
 
     def _print_dns_record_explanation(self, zone_name: str) -> None:

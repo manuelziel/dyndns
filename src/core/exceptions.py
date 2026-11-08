@@ -7,6 +7,7 @@ across the application. All custom exceptions inherit from DynDNSException.
 Exception Hierarchy:
     DynDNSException (Base)
     ├── DatabaseError: Database operations (sqlite3 errors)
+    │   └── DatabaseLockedError: SQLite lock contention timeout
     ├── ConfigError: Configuration issues (TOML parsing, missing keys)
     ├── EncryptionError: Encryption/Decryption failures
     ├── NetworkError: Network connectivity issues (IP detection)
@@ -49,6 +50,7 @@ class DynDNSException(Exception):
         Args:
             message: Error description.
         """
+        self.message = message
         super().__init__(message)
 
 
@@ -60,6 +62,18 @@ class DatabaseError(DynDNSException):
 
     def __init__(self, message: str = ExceptionMessages.DATABASE) -> None:
         """Initialize database exception with default or custom message.
+
+        Args:
+            message: Error description.
+        """
+        super().__init__(message)
+
+
+class DatabaseLockedError(DatabaseError):
+    """Raised when the SQLite database is locked beyond the busy timeout."""
+
+    def __init__(self, message: str = ExceptionMessages.DATABASE_LOCKED) -> None:
+        """Initialize database-locked exception with default or custom message.
 
         Args:
             message: Error description.

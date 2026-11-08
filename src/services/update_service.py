@@ -251,7 +251,6 @@ class UpdateService:
         ]
         dyndns_row = self.database.get_dyndns_config_by_zone(zone["id"])
         if not records_needing_update and bool(dyndns_row and dict(dyndns_row).get("update_url")):
-            self._mark_records_checked(zone["records"])
             self.logger.debug(f"Zone '{zone['zone_name']}': All DynDNS records up-to-date")
             return True, 0, 0
 
@@ -272,34 +271,6 @@ class UpdateService:
         return False, 0, 0
 
 
-    def _mark_records_checked(self, records: List[Dict[str, Any]]) -> None:
-        """Mark records as checked when no IP change is required.
-
-        Args:
-            records: List of record dictionaries.
-        """
-        for record in records:
-            try:
-                if (
-                    record["record_type"] == RecordType.A
-                    and self.network.ipv4_address
-                ):
-                    self.database.update_ip_address(
-                        record["id"], self.network.ipv4_address, changed=False
-                    )
-                elif (
-                    record["record_type"] == RecordType.AAAA
-                    and self.network.ipv6_address
-                ):
-                    self.database.update_ip_address(
-                        record["id"], self.network.ipv6_address, changed=False
-                    )
-            except DatabaseError as e:
-                self.logger.warning(
-                    f"Failed to update last_checked_at for '{record['record_name']}': {e}"
-                )
-
-
     def _process_rest_zone(
         self, zone: Dict[str, Any]
     ) -> Tuple[int, int]:
@@ -317,7 +288,6 @@ class UpdateService:
 
         for record in zone["records"]:
             if not record.get("needs_update"):
-                self._mark_records_checked([record])
                 continue
 
             if self._update_single_rest_record(client, zone, record):

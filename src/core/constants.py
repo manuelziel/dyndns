@@ -29,7 +29,7 @@ class AppSettings:
         SOFTWARE_NAME: Name of the application.
         SYSLOG_IDENTIFIER: Systemd syslog identifier.
     """
-    VERSION = "1.0.3-alpha.8"
+    VERSION = "1.0.3"
     AUTHOR = "Manuel Ziel"
     EMAIL = "manuelziel@gmail.com"
     DESCRIPTION = "Dynamic DNS Client"
@@ -231,21 +231,13 @@ class EnvKeys:
 # SYSTEM DEFAULTS - User Account and Permission Defaults
 ################################################################################
 
-class SystemDefaults:
-    """Namespace for system defaults and permission masks.
-
-    Attributes:
-        ROOT_USER: root username.
-        FILE_MODE_GROUP_WRITE: Read/write for user and group (0o660).
-        DIR_MODE_GROUP_WRITE: Read/write/execute for user and group (0o770).
-        KEY_FILE_MODE: Read/write only for owner (0o600).
-        KEY_DIR_MODE: Read/write/execute only for owner (0o700).
-    """
-    ROOT_USER = "root"
+class OwnershipDefaults:
+    """Default permissions and user names for ownership handoff."""
     FILE_MODE_GROUP_WRITE = 0o660
     DIR_MODE_GROUP_WRITE = 0o770
-    KEY_FILE_MODE = 0o600
-    KEY_DIR_MODE = 0o700
+    ROOT_USER = "root"
+    PLACEHOLDER_USER = "[SERVICE_USER]"
+    PLACEHOLDER_GROUP = "[SERVICE_GROUP]"
 
 
 ################################################################################
@@ -253,8 +245,9 @@ class SystemDefaults:
 ################################################################################
 
 class EncryptionDefaults:
-    """Namespace for encryption defaults."""
-    KEY_LENGTH = 44
+    """Default values for Fernet encryption key management."""
+    KEY_FILE_MODE = 0o600
+    FERNET_KEY_LENGTH = 44
 
 
 ################################################################################
@@ -313,30 +306,45 @@ class ExportFormat:
 ################################################################################
 
 class DatabaseDefaults:
-    """Default values for SQLite database configuration.
+    """Default values for SQLite database configuration and wear-leveling.
 
     Attributes:
-        DB_SCHEMA_VERSION: Current database schema version.
-        UNVERSIONED_SCHEMA: Schema version 0 (unversioned/new).
+        DB_SCHEMA_VERSION: Current database schema version (PRAGMA user_version).
+        UNVERSIONED_SCHEMA: Initial schema version for new databases (0).
         MAX_CONNECTIONS: Maximum connections in the pool.
         CONNECT_TIMEOUT: SQLite connect timeout in seconds.
-        BUSY_TIMEOUT: SQLite busy timeout in milliseconds.
         POOL_GET_TIMEOUT: Timeout to acquire a connection from pool.
         POOL_PUT_TIMEOUT: Timeout to return a connection to pool.
-        MMAP_SIZE: Memory-mapped I/O size in bytes (256 MB).
+        BUSY_TIMEOUT_MS: SQLite lock wait timeout in milliseconds (5 s).
+        JOURNAL_SIZE_LIMIT: Maximum WAL file size after checkpoints (64 MB).
+        CACHE_SIZE_KB: Negative value sets RAM page cache in KiB (16 MB).
+        MMAP_SIZE: Memory-mapped Read-I/O size in bytes (128 MB).
         DB_TIMESTAMP_FORMAT: Timestamp format used for database entries.
         DYNDNS_BUNDLE_ID_PREFIX: Key prefix in app_config for DynDNS bundle UUIDs.
     """
     DB_SCHEMA_VERSION = 3
     UNVERSIONED_SCHEMA = 0
     MAX_CONNECTIONS = 5
-    CONNECT_TIMEOUT = 30.0
-    BUSY_TIMEOUT = 30000
+    CONNECT_TIMEOUT = 5.0
     POOL_GET_TIMEOUT = 10.0
     POOL_PUT_TIMEOUT = 1.0
-    MMAP_SIZE = 268435456
+    BUSY_TIMEOUT_MS = 5000
+    JOURNAL_SIZE_LIMIT = 67108864
+    CACHE_SIZE_KB = -16384
+    MMAP_SIZE = 134217728
     DB_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
     DYNDNS_BUNDLE_ID_PREFIX = "dyndns_bundle_id_"
+
+
+class StorageConstants:
+    """Units and conversion factors for disk and database storage calculations."""
+    BYTES_PER_KB = 1024.0
+    BYTES_PER_MB = 1024.0 ** 2
+    BYTES_PER_GB = 1024.0 ** 3
+    PERCENTAGE_FACTOR = 100.0
+    DEFAULT_DECIMALS = 2
+    DISK_PERCENT_DECIMALS = 1
+    UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 
 
 ################################################################################
@@ -387,7 +395,8 @@ class DaemonDefaults:
 
 class AppPaths:
     """Namespace for default application paths and filenames."""
-    DATA_DIR = "/var/lib/dyndns/"
+    DATA_DIR = "/var/lib/dyndns"
+    RUNTIME_DIR = "/run/dyndns"
     DB_FILE = "dyndns.db"
     CONFIG_FILE = "config.toml"
     ENCRYPTION_KEY_FILE = ".encryption_key"
@@ -432,6 +441,7 @@ class ExceptionMessages:
     """Default error messages for custom exceptions."""
     DEFAULT = "An application error occurred"
     DATABASE = "Database operation failed"
+    DATABASE_LOCKED = "Database is currently locked by another process"
     CONFIG = "Configuration error"
     ENCRYPTION = "Encryption operation failed"
     NETWORK = "Network operation failed"

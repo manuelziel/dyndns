@@ -12,13 +12,20 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-import os
 from typing import Any, Callable, Dict, List, Optional
 
 from src.core.constants import PlaceholderIP
-from src.cli.constants import PromptDefaults, CLIConfig, SelectionChoices
+from src.cli.constants import PromptDefaults, CLIConfig, SelectionChoices, PaginationChoices
 from src.utils.colors import Colors, LOG_SYMBOLS
-from .output import print_error, print_warning, row_to_dict
+from .output import (
+    print_error,
+    print_warning,
+    print_info,
+    print_section,
+    clear_screen,
+    row_to_dict,
+)
+from .validate import resolve_path, is_valid_file_path
 
 
 ################################################################################
@@ -218,45 +225,77 @@ def get_choice_from_list(
         return row_to_dict(selected) if selected else None
 
 
-def resolve_path(path: str) -> str:
-    """Resolve tilde (~) and relative segments, returning absolute path.
+def print_paginated_list(
+    items: List[Any],
+    print_item_func: Callable[[Any], None],
+    page_size: int = CLIConfig.DEFAULT_PAGE_SIZE,
+    title: str = "Items",
+) -> None:
+    """Print a list of items paginated with navigation controls.
 
     Args:
-        path: Raw path string to resolve.
-
-    Returns:
-        Cleaned absolute canonical path.
+        items: List of all items to paginate.
+        print_item_func: Callback function to print a single item.
+        page_size: Number of items per page. Defaults to CLIConfig.DEFAULT_PAGE_SIZE.
+        title: Title of the paginated list. Defaults to "Items".
     """
-    return os.path.abspath(os.path.expanduser(path.strip()))
+    total_items = len(items)
+    if total_items == 0:
+        print_info(f"No {title.lower()} found.")
+        wait_for_enter()
+        return
+
+    page_size = max(1, page_size)
+    total_pages = (total_items + page_size - 1) // page_size
+    current_page = 1
+    while True:
+        clear_screen()
+        print_section(f"{title} (Page {current_page} of {total_pages})")
+        start_index = (current_page - 1) * page_size
+        end_index = min(start_index + page_size, total_items)
+        for item in items[start_index:end_index]:
+            print_item_func(item)
+        _print_pagination_controls(
+            start_index, end_index, total_items, current_page, total_pages, title
+        )
+        choice = safe_input("Select an option: ").strip().lower()
+        if choice == PaginationChoices.BACK or not choice:
+            break
+        if choice == PaginationChoices.NEXT and current_page < total_pages:
+            current_page += 1
+        elif choice == PaginationChoices.PREV and current_page > 1:
+            current_page -= 1
 
 
-def is_valid_file_path(path: str, must_exist: bool = False) -> bool:
-    """Validate path format and optional existence.
+def _print_pagination_controls(
+    start_index: int,
+    end_index: int,
+    total_items: int,
+    current_page: int,
+    total_pages: int,
+    title: str,
+) -> None:
+    """Print pagination footer and available navigation options.
 
     Args:
-        path: Path string to validate.
-        must_exist: If True, checks if file exists. If False, checks if
-            the parent directory is writable/exists.
-
-    Returns:
-        True if path is valid, False otherwise.
+        start_index: Zero-based start index of current page.
+        end_index: Exclusive end index of current page.
+        total_items: Total number of items across all pages.
+        current_page: Current 1-based page number.
+        total_pages: Total number of pages.
+        title: Section title used for item count label.
     """
-    if not path:
-        return False
-
-    try:
-        resolved = resolve_path(path)
-
-        if must_exist:
-            return os.path.isfile(resolved)
-
-        if os.path.exists(resolved):
-            return os.path.isfile(resolved) and os.access(resolved, os.W_OK)
-
-        parent_dir = os.path.dirname(resolved)
-        return os.path.isdir(parent_dir) and os.access(parent_dir, os.W_OK)
-    except (ValueError, OSError):
-        return False
+    print(f"\n{Colors.DIM}{'—' * CLIConfig.BANNER_WIDTH}{Colors.NC}")
+    print(f"Showing {start_index + 1}-{end_index} of {total_items} {title.lower()}")
+    print()
+    options = []
+    if current_page < total_pages:
+        options.append(f"{Colors.BOLD}{PaginationChoices.NEXT}{Colors.NC}) Next page")
+    if current_page > 1:
+        options.append(f"{Colors.BOLD}{PaginationChoices.PREV}{Colors.NC}) Previous page")
+    options.append(f"{Colors.BOLD}{PaginationChoices.BACK}{Colors.NC}) Back")
+    print("Options:  " + "  |  ".join(options))
+    print()
 
 
 ################################################################################

@@ -18,18 +18,19 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
+from contextlib import contextmanager
 import json
 import logging
 import os
 import queue
+import shutil
 import sqlite3
 import threading
-from contextlib import contextmanager
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from .encryption import EncryptionManager
-from .constants import SyncStatus, UpdateStatus, DatabaseDefaults
-from .exceptions import DatabaseError, EncryptionError
+from .constants import SyncStatus, UpdateStatus, DatabaseDefaults, StorageConstants
+from .exceptions import DatabaseError, DatabaseLockedError, EncryptionError
 from .ownership import ensure_service_ownership
 
 
@@ -38,10 +39,11 @@ from .ownership import ensure_service_ownership
 ################################################################################
 
 class Database:
-    """SQLite database handler with connection pooling for thread safety.
+    """SQLite database handler with re-entrant connection pooling.
 
     Provides thread-safe database operations using a connection pool with
-    configurable size. Supports WAL mode for improved concurrency.
+    configurable size, atomic transactions, and WAL/RAM-cache PRAGMAs optimized
+    for Linux daemons and SSD/SD-card longevity.
 
     Attributes:
         db_file: Path to the SQLite database file.
@@ -50,8 +52,16 @@ class Database:
         config: Configuration object reference.
     """
 
-    def __init__(self, db_file: str, max_connections: int = DatabaseDefaults.MAX_CONNECTIONS, logger: Optional[Any] = None, config: Optional[Any] = None) -> None:
-        """Initialize database with connection pooling.
+    DB_SCHEMA_VERSION: int = DatabaseDefaults.DB_SCHEMA_VERSION
+
+    def __init__(
+        self,
+        db_file: str,
+        max_connections: int = DatabaseDefaults.MAX_CONNECTIONS,
+        logger: Optional[Any] = None,
+        config: Optional[Any] = None,
+    ) -> None:
+        """Initialize database with connection pooling and schema verification.
 
         Args:
             db_file: Path to SQLite database file. Created if not exists.
@@ -60,15 +70,14 @@ class Database:
             config: Configuration object for additional settings.
 
         Raises:
-            DatabaseError: If connection pool initialization fails.
+            DatabaseError: If connection pool initialization or migration fails.
         """
         self.db_file = db_file
         self.max_connections = max_connections
         self.logger = logger or logging.getLogger(__name__)
         self.config = config
-        self._pool = queue.Queue(maxsize=max_connections)
-        self._pool_lock = threading.Lock()
-        self._created_connections = 0
+        self._pool: queue.Queue[sqlite3.Connection] = queue.Queue(maxsize=max_connections)
+        self._local = threading.local()
         self._encryption = EncryptionManager(self.config.encryption_key_path, self.logger)
 
         db_exists = os.path.exists(db_file)
@@ -76,15 +85,12 @@ class Database:
         if not db_exists:
             self.logger.info("Database does not exist. Creating a new one...")
             self.create_tables()
-            with self.get_connection() as conn:
-                conn.execute(f"PRAGMA user_version = {DatabaseDefaults.DB_SCHEMA_VERSION}")
-                conn.commit()
+            self.execute_update(f"PRAGMA user_version = {self.DB_SCHEMA_VERSION}")
         else:
             self.run_migrations()
 
-        ensure_service_ownership(db_file, logger=self.logger)
-        for sidecar in (f"{db_file}-wal", f"{db_file}-shm"):
-            ensure_service_ownership(sidecar, logger=self.logger)
+        for path in (db_file, f"{db_file}-wal", f"{db_file}-shm"):
+            ensure_service_ownership(path, logger=self.logger)
         self.logger.info(f"Database initialized with connection pool (max: {max_connections})")
 
 
@@ -94,57 +100,74 @@ class Database:
 
 
     ############################################################################
-    # PUBLIC CONNECTION INTERFACE - Context Manager
+    # PUBLIC CONNECTION & TRANSACTION INTERFACE - Context Managers
     ############################################################################
-    
-    @contextmanager
-    def get_connection(self) -> Any:
-        """Get a connection from the pool as a context manager.
 
-        Thread-safe method to acquire a database connection. The connection
-        is automatically returned to the pool when the context exits.
+    @contextmanager
+    def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a connection from the pool as a re-entrant context manager.
 
         Yields:
-            SQLite connection from pool.
+            sqlite3.Connection: Active database connection from the pool.
 
         Raises:
-            DatabaseError: If connection pool exhausted.
+            DatabaseLockedError: If the database is locked beyond busy_timeout.
+            DatabaseError: If pool is exhausted or a database error occurs.
         """
-        conn = None
+        if getattr(self._local, "active_conn", None) is not None:
+            try:
+                yield self._local.active_conn
+            except sqlite3.Error as exc:
+                self._raise_database_error(exc)
+            return
+        conn = self._acquire_valid_connection()
+        self._local.active_conn = conn
         try:
-            try:
-                conn = self._pool.get(timeout=DatabaseDefaults.POOL_GET_TIMEOUT)
-            except queue.Empty:
-                raise DatabaseError("Connection pool exhausted - no connections available")
-            try:
-                conn.execute("SELECT 1")
-            except sqlite3.Error:
-                try:
-                    conn.close()
-                except sqlite3.Error:
-                    pass
-                conn = self._create_connection()
             yield conn
+        except sqlite3.Error as exc:
+            self._safe_rollback(conn)
+            self._raise_database_error(exc)
         except BaseException:
-            if conn:
-                try:
-                    conn.rollback()
-                except sqlite3.Error:
-                    pass
+            self._safe_rollback(conn)
             raise
         finally:
-            if conn:
-                try:
-                    self._pool.put(conn, timeout=DatabaseDefaults.POOL_PUT_TIMEOUT)
-                except queue.Full:
-                    conn.close()
+            self._release_connection(conn)
+
+
+    @contextmanager
+    def transaction(self) -> Generator[None, None, None]:
+        """Execute a block of operations inside a single atomic transaction.
+
+        Yields:
+            None
+
+        Raises:
+            DatabaseLockedError: If the database is locked beyond busy_timeout.
+            DatabaseError: If pool is exhausted or a database error occurs.
+        """
+        if getattr(self._local, "in_transaction", False):
+            yield
+            return
+        with self.get_connection() as conn:
+            self._local.in_transaction = True
+            try:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                yield
+                if conn.in_transaction:
+                    conn.commit()
+            except BaseException:
+                self._safe_rollback(conn)
+                raise
+            finally:
+                self._local.in_transaction = False
 
 
     ############################################################################
     # QUERY EXECUTION METHODS - Public Database Operations
     ############################################################################
-    
-    def execute_query(self, query: str, params: Optional[tuple] = None) -> List[sqlite3.Row]:
+
+    def execute_query(self, query: str, params: Optional[Tuple[Any, ...]] = None) -> List[sqlite3.Row]:
         """Execute a SELECT query and return results.
 
         Thread-safe method to execute read operations.
@@ -159,18 +182,14 @@ class Database:
         Raises:
             DatabaseError: If database query execution fails.
         """
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, params or ())
-                return cursor.fetchall()
-        except sqlite3.Error as e:
-            self.logger.error(f"Database query failed: {e} | Query: {query} | Params: {params}")
-            raise DatabaseError(f"Database query failed: {e}") from e
-    
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params or ())
+            return cursor.fetchall()
 
-    def execute_update(self, query: str, params: Optional[tuple] = None) -> int:
-        """Execute an INSERT, UPDATE, or DELETE query.
+
+    def execute_update(self, query: str, params: Optional[Tuple[Any, ...]] = None) -> int:
+        """Execute an INSERT, UPDATE, DELETE, or DDL query.
 
         Thread-safe method to execute write operations with automatic commit.
 
@@ -184,18 +203,14 @@ class Database:
         Raises:
             DatabaseError: If database update execution fails.
         """
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, params or ())
-                conn.commit()
-                return cursor.rowcount
-        except sqlite3.Error as e:
-            self.logger.error(f"Database update failed: {e} | Query: {query} | Params: {params}")
-            raise DatabaseError(f"Database update failed: {e}") from e
-    
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params or ())
+            self._commit(conn)
+            return cursor.rowcount
 
-    def execute_many(self, query: str, params_list: List[tuple]) -> int:
+
+    def execute_many(self, query: str, params_list: List[Tuple[Any, ...]]) -> int:
         """Execute a query with multiple parameter sets.
 
         Thread-safe batch operation for efficient bulk inserts or updates.
@@ -210,40 +225,67 @@ class Database:
         Raises:
             DatabaseError: If database batch update execution fails.
         """
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.executemany(query, params_list)
-                conn.commit()
-                return cursor.rowcount            
-        except sqlite3.Error as e:
-            self.logger.error(f"Database batch update failed: {e} | Query: {query}")
-            raise DatabaseError(f"Database batch update failed: {e}") from e
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(query, params_list)
+            self._commit(conn)
+            return cursor.rowcount
 
 
     ############################################################################
-    # RESOURCE MANAGEMENT - Cleanup Methods
+    # RESOURCE MANAGEMENT & STORAGE DIAGNOSTICS
     ############################################################################
 
     def close(self) -> None:
-        """Close all connections in the pool."""
+        """Close all connections in the pool and release resources."""
+        pool = getattr(self, "_pool", None)
+        if pool is None:
+            return
         try:
-            while not self._pool.empty():
+            while not pool.empty():
                 try:
-                    conn = self._pool.get_nowait()
-                    conn.close()
+                    self._pool.get_nowait().close()
                 except queue.Empty:
                     break
-                except Exception as e:
+                except (sqlite3.Error, OSError) as exc:
                     if self.logger:
-                        self.logger.warning(f"Error closing connection: {e}")
-            
+                        self.logger.warning(f"Error closing connection: {exc}")
             if self.logger:
-                self.logger.info("All database connections closed")
-                
-        except Exception as e:
+                self.logger.debug("All database connections closed")
+        except (sqlite3.Error, OSError) as exc:
             if self.logger:
-                self.logger.error(f"Error during database cleanup: {e}")
+                self.logger.error(f"Error during database cleanup: {exc}")
+
+
+    def get_storage_stats(self) -> Dict[str, Any]:
+        """Collect database file sizes, dynamic table row counts, and host disk usage.
+
+        Returns:
+            Dictionary with 'database' and 'disk' metrics for system diagnostics.
+        """
+        db_path = os.path.abspath(self.db_file)
+        db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+        wal_size = os.path.getsize(f"{db_path}-wal") if os.path.exists(f"{db_path}-wal") else 0
+        shm_size = os.path.getsize(f"{db_path}-shm") if os.path.exists(f"{db_path}-shm") else 0
+        total_size = db_size + wal_size + shm_size
+        db_dir = os.path.dirname(db_path) or "."
+        usage = shutil.disk_usage(db_dir if os.path.exists(db_dir) else ".")
+        used_pct = round(
+            (usage.used / usage.total) * StorageConstants.PERCENTAGE_FACTOR, StorageConstants.DISK_PERCENT_DECIMALS
+        ) if usage.total > 0 else 0.0
+        return {
+            "database": {
+                "path": db_path, "db_size_bytes": db_size, "db_size_human": self._format_bytes(db_size),
+                "wal_size_bytes": wal_size, "wal_size_human": self._format_bytes(wal_size),
+                "shm_size_bytes": shm_size, "shm_size_human": self._format_bytes(shm_size),
+                "total_size_bytes": total_size, "total_size_human": self._format_bytes(total_size),
+                "row_counts": self._get_table_row_counts(),
+            },
+            "disk": {
+                "mount_point": db_dir, "free_bytes": usage.free, "free_human": self._format_bytes(usage.free),
+                "total_bytes": usage.total, "total_human": self._format_bytes(usage.total), "used_percent": used_pct,
+            },
+        }
 
 
     ############################################################################
@@ -257,10 +299,11 @@ class Database:
         records, IP addresses, update history, and configuration tables.
         Thread-safe operation supporting multi-subdomain architecture.
         """
-        self._create_zone_and_record_tables()
-        self._create_ip_and_history_tables()
-        self._create_config_and_log_tables()
-        self.create_indexes()
+        with self.transaction():
+            self._create_zone_and_record_tables()
+            self._create_ip_and_history_tables()
+            self._create_config_and_log_tables()
+            self.create_indexes()
 
 
     def _create_zone_and_record_tables(self) -> None:
@@ -317,7 +360,7 @@ class Database:
 
 
     def _create_config_and_log_tables(self) -> None:
-        """Create DynDNS configuration, application configuration, and log tables."""
+        """Create DynDNS configuration and application configuration tables."""
         self.create_table("dyndns_config", [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
             ("zone_id", "INTEGER NOT NULL"),                    # Foreign Key to zones
@@ -339,27 +382,23 @@ class Database:
             ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
         ])
 
-        self.create_table("app_logs", [
-            ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
-            ("level", "TEXT NOT NULL"),
-            ("message", "TEXT NOT NULL"),
-            ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
-        ])
 
-
-    def create_table(self, table_name: str, columns: List[tuple]) -> None:
+    def create_table(self, table_name: str, columns: List[Tuple[str, str]]) -> None:
         """Create a table if it does not exist.
 
         Thread-safe method to create database tables idempotently.
 
         Args:
-            table_name: Name of the table to create.
+            table_name: Alphanumeric/underscore name of the table to create.
             columns: List of (column_name, type_definition) tuples.
+
+        Raises:
+            DatabaseError: If table_name contains invalid characters or DDL fails.
         """
-        columns_sql = ", ".join([f"{name} {type_}" for name, type_ in columns])
-        sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({columns_sql});"
-        
-        self.execute_update(sql)
+        if not table_name or not table_name.replace("_", "").isalnum():
+            raise DatabaseError(f"Invalid SQLite table identifier: {table_name}")
+        columns_sql = ", ".join([f"{name} {type_}".strip() for name, type_ in columns])
+        self.execute_update(f"CREATE TABLE IF NOT EXISTS {table_name} ({columns_sql});")
 
 
     def create_indexes(self) -> None:
@@ -380,20 +419,17 @@ class Database:
 
 
     def get_schema_version(self) -> int:
-        """Get the current schema version of the database.
+        """Get the current schema version (PRAGMA user_version) of the database.
 
         Returns:
-            int: The schema version (0 if not set).
+            int: Current integer schema version (0 if unversioned).
         """
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("PRAGMA user_version")
-                row = cursor.fetchone()
-                return row[0] if row else 0
-        except sqlite3.Error as e:
-            self.logger.error(f"Failed to get schema version: {e}")
-            return 0
+            rows = self.execute_query("PRAGMA user_version")
+            return int(rows[0][0]) if rows else DatabaseDefaults.UNVERSIONED_SCHEMA
+        except DatabaseError as exc:
+            self.logger.error(f"Failed to read schema version: {exc}")
+            return DatabaseDefaults.UNVERSIONED_SCHEMA
 
 
     def run_migrations(self) -> None:
@@ -417,13 +453,14 @@ class Database:
 
         self.logger.info(f"Applying schema migrations (v{current} -> v{expected})...")
         try:
-            self.create_tables()
-            self._apply_schema_migrations(current, expected)
-            self.create_indexes()
+            with self.transaction():
+                self.create_tables()
+                self._apply_schema_migrations(current, expected)
+                self.create_indexes()
             self.logger.info(f"Successfully migrated schema to v{expected}")
-        except sqlite3.Error as e:
+        except (DatabaseError, sqlite3.Error) as e:
             self.logger.error(f"Database migration failed: {e}")
-            raise DatabaseError(f"Database migration failed: {e}")
+            raise DatabaseError(f"Database migration failed: {e}") from e
 
 
     def _init_unversioned_schema_if_empty(self, expected: int) -> bool:
@@ -436,18 +473,13 @@ class Database:
             True if a fresh schema was initialized, False if legacy tables exist.
         """
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='zones'")
-                if not cursor.fetchone():
-                    self.logger.info("Unversioned database detected. Initializing schema tables...")
-                    self.create_tables()
-                    with self.get_connection() as inner_conn:
-                        inner_cursor = inner_conn.cursor()
-                        inner_cursor.execute(f"PRAGMA user_version = {expected}")
-                        inner_conn.commit()
-                    return True
-        except sqlite3.Error:
+            rows = self.execute_query("SELECT name FROM sqlite_master WHERE type='table' AND name='zones'")
+            if not rows:
+                self.logger.info("Unversioned database detected. Initializing schema tables...")
+                self.create_tables()
+                self.execute_update(f"PRAGMA user_version = {expected}")
+                return True
+        except (DatabaseError, sqlite3.Error):
             pass
         return False
 
@@ -539,19 +571,17 @@ class Database:
 
 
     def set_config_by_key(self, key: str, value: str) -> None:
-        """Set or update configuration value by key.
-
-        Thread-safe method to store application configuration. Creates new
-        entry if key doesn't exist, updates existing entry otherwise.
+        """Insert or update a configuration key-value pair atomically.
 
         Args:
             key: Configuration key to set.
             value: Configuration value to store.
         """
-        affected = self.execute_update("UPDATE app_config SET value = ? WHERE key = ?", (value, key))
-        
-        if affected == 0:
-            self.execute_update("INSERT INTO app_config (key, value) VALUES (?, ?)", (key, value))
+        sql = (
+            "INSERT INTO app_config (key, value) VALUES (?, ?) ON CONFLICT(key) "
+            "DO UPDATE SET value = excluded.value WHERE app_config.value IS NOT excluded.value"
+        )
+        self.execute_update(sql, (key, value))
 
 
     def delete_config_by_key(self, key: str) -> bool:
@@ -565,8 +595,7 @@ class Database:
         Returns:
             True if entry was deleted, False if key not found.
         """
-        affected = self.execute_update("DELETE FROM app_config WHERE key = ?", (key,))
-        return affected > 0
+        return self.execute_update("DELETE FROM app_config WHERE key = ?", (key,)) > 0
 
 
     ############################################################################
@@ -718,7 +747,7 @@ class Database:
     
 
     def get_records_by_zone(self, zone_id: int, enabled_only: bool = True) -> List[Dict[str, Any]]:
-        """Get all DNS records for a zone.
+        """Get all DNS records for a zone with their stored IP metadata.
 
         Args:
             zone_id: Zone database ID to filter by.
@@ -727,10 +756,13 @@ class Database:
         Returns:
             List of record dictionaries ordered by name and type.
         """
-        if enabled_only:
-            sql = "SELECT * FROM records WHERE zone_id = ? AND enabled = 1 ORDER BY record_name, record_type"
-        else:
-            sql = "SELECT * FROM records WHERE zone_id = ? ORDER BY record_name, record_type"
+        base_sql = (
+            "SELECT r.*, ip.ip_address, ip.last_checked_at, ip.last_changed_at "
+            "FROM records r LEFT JOIN ip_addresses ip ON ip.record_id = r.id "
+            "WHERE r.zone_id = ?"
+        )
+        order_sql = " ORDER BY r.record_name, r.record_type"
+        sql = f"{base_sql} AND r.enabled = 1{order_sql}" if enabled_only else f"{base_sql}{order_sql}"
         rows = self.execute_query(sql, (zone_id,))
         return [dict(row) for row in rows]
     
@@ -786,7 +818,7 @@ class Database:
     
 
     def update_record_provider_id(self, record_id: int, provider_record_id: str) -> int:
-        """Update Provider Record ID.
+        """Update Provider Record ID if changed.
 
         Args:
             record_id: Record database ID to update.
@@ -795,8 +827,11 @@ class Database:
         Returns:
             Number of rows affected (0 or 1).
         """
-        sql = "UPDATE records SET provider_record_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        return self.execute_update(sql, (provider_record_id, record_id))
+        sql = (
+            "UPDATE records SET provider_record_id = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND provider_record_id IS NOT ?"
+        )
+        return self.execute_update(sql, (provider_record_id, record_id, provider_record_id))
     
 
     def update_record_status(self, record_id: int, enabled: bool) -> int:
@@ -918,35 +953,24 @@ class Database:
         return dict(rows[0]) if rows else None
     
 
-    def update_ip_address(self, record_id: int, ip_address: str, changed: bool = False) -> None:
-        """Update or insert IP address for a record.
-
-        Creates new entry if record has no IP, updates existing otherwise.
+    def update_ip_address(self, record_id: int, ip_address: str, changed: bool = True) -> None:
+        """Insert or update IP address for a record only when the IP changes.
 
         Args:
             record_id: Record database ID to update.
             ip_address: New IP address string.
-            changed: If True, update last_changed_at timestamp. Defaults to False.
+            changed: Legacy flag kept for signature compatibility.
         """
-        existing = self.get_ip_address(record_id)
-        
-        if existing:
-            if changed:
-                sql = """UPDATE ip_addresses 
-                         SET ip_address = ?, 
-                             last_checked_at = CURRENT_TIMESTAMP,
-                             last_changed_at = CURRENT_TIMESTAMP
-                         WHERE record_id = ?"""
-            else:
-                sql = """UPDATE ip_addresses 
-                         SET ip_address = ?, 
-                             last_checked_at = CURRENT_TIMESTAMP
-                         WHERE record_id = ?"""
-            self.execute_update(sql, (ip_address, record_id))
-        else:
-            sql = """INSERT INTO ip_addresses (record_id, ip_address, last_checked_at, last_changed_at)
-                     VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"""
-            self.execute_update(sql, (record_id, ip_address))
+        sql = (
+            "INSERT INTO ip_addresses (record_id, ip_address, last_checked_at, last_changed_at) "
+            "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(record_id) DO UPDATE SET "
+            "ip_address = excluded.ip_address, "
+            "last_checked_at = CURRENT_TIMESTAMP, "
+            "last_changed_at = CURRENT_TIMESTAMP "
+            "WHERE ip_addresses.ip_address IS NOT excluded.ip_address"
+        )
+        self.execute_update(sql, (record_id, ip_address))
     
 
     ############################################################################
@@ -1114,67 +1138,159 @@ class Database:
 
 
     ############################################################################
-    # PRIVATE METHODS - Internal Implementation
+    # PRIVATE METHODS - Connection Pool & Error Handling
     ############################################################################
-    
-    def _initialize_pool(self) -> None:
-        """Initialize the connection pool with connections.
 
-        Creates max_connections number of database connections and adds
-        them to the pool for thread-safe access.
+    @staticmethod
+    def _format_bytes(size_bytes: int) -> str:
+        """Format a byte count into a human-readable string (e.g. '14.06 MB').
+
+        Args:
+            size_bytes: Byte count to format.
+
+        Returns:
+            Human-readable size string.
+        """
+        val = float(max(0, size_bytes))
+        for unit in StorageConstants.UNITS:
+            if val < StorageConstants.BYTES_PER_KB or unit == StorageConstants.UNITS[-1]:
+                return f"{val:.{StorageConstants.DEFAULT_DECIMALS}f} {unit}"
+            val /= StorageConstants.BYTES_PER_KB
+        return f"{val:.{StorageConstants.DEFAULT_DECIMALS}f} B"
+
+
+    def _get_table_row_counts(self) -> Dict[str, int]:
+        """Count rows across all user tables in the SQLite database.
+
+        Returns:
+            Dictionary mapping table names to row counts.
+        """
+        counts: Dict[str, int] = {}
+        try:
+            sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            for row in self.execute_query(sql):
+                t_name = str(row["name"])
+                if t_name.replace("_", "").isalnum():
+                    cnt_rows = self.execute_query(f"SELECT COUNT(*) FROM {t_name}")
+                    counts[t_name] = int(cnt_rows[0][0] or 0) if cnt_rows else 0
+        except DatabaseError as exc:
+            self.logger.warning(f"Failed to query table row counts: {exc}")
+        return counts
+
+
+    def _acquire_valid_connection(self) -> sqlite3.Connection:
+        """Acquire a connection from the pool without redundant ping queries.
+
+        Returns:
+            sqlite3.Connection: Active connection from pool.
+
+        Raises:
+            DatabaseError: If connection pool is exhausted.
+        """
+        try:
+            return self._pool.get(timeout=DatabaseDefaults.POOL_GET_TIMEOUT)
+        except queue.Empty as exc:
+            raise DatabaseError("Connection pool exhausted - no connections available") from exc
+
+
+    def _raise_database_error(self, exc: sqlite3.Error) -> None:
+        """Translate a sqlite3 error into the project exception hierarchy.
+
+        Args:
+            exc: Original SQLite exception.
+
+        Raises:
+            DatabaseLockedError: If the database is locked.
+            DatabaseError: For all other SQLite errors.
+        """
+        if isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower():
+            self.logger.error(f"Database lock timeout: {exc}")
+            raise DatabaseLockedError(str(exc)) from exc
+        self.logger.error(f"Database operation failed: {exc}")
+        raise DatabaseError(str(exc)) from exc
+
+
+    def _safe_rollback(self, conn: Optional[sqlite3.Connection]) -> None:
+        """Roll back an uncommitted transaction without masking caller errors.
+
+        Args:
+            conn: Active SQLite connection, if acquired.
+        """
+        if conn:
+            try:
+                conn.rollback()
+            except sqlite3.Error as rollback_error:
+                self.logger.warning(f"Rollback failed during exception propagation: {rollback_error}")
+
+
+    def _release_connection(self, conn: Optional[sqlite3.Connection]) -> None:
+        """Return a connection to the pool or close it if full.
+
+        Args:
+            conn: Active SQLite connection to release.
+        """
+        if not conn:
+            return
+        self._local.active_conn = None
+        if conn.in_transaction:
+            self._safe_rollback(conn)
+        try:
+            self._pool.put(conn, timeout=DatabaseDefaults.POOL_PUT_TIMEOUT)
+        except queue.Full:
+            conn.close()
+
+
+    def _commit(self, conn: sqlite3.Connection) -> None:
+        """Commit changes unless running inside an outer transaction() block.
+
+        Args:
+            conn: Active SQLite connection.
+        """
+        if not getattr(self._local, "in_transaction", False):
+            conn.commit()
+
+
+    def _initialize_pool(self) -> None:
+        """Initialize the connection pool with max_connections connections.
 
         Raises:
             DatabaseError: If pool initialization fails.
         """
         try:
             for _ in range(self.max_connections):
-                conn = self._create_connection()
-                self._pool.put(conn)
-                self._created_connections += 1
-        except DatabaseError as e:
-            while not self._pool.empty():
-                try:
-                    conn = self._pool.get_nowait()
-                    conn.close()
-                except queue.Empty:
-                    break
-                except Exception:
-                    pass
-            raise DatabaseError(f"Failed to initialize connection pool: {e}")
-    
+                self._pool.put(self._create_connection())
+        except (DatabaseError, sqlite3.Error, OSError) as exc:
+            self.close()
+            raise DatabaseError(f"Failed to initialize connection pool: {exc}") from exc
+
 
     def _create_connection(self) -> sqlite3.Connection:
-        """Create a new database connection with proper settings.
-
-        Configures connection for thread-safety, WAL mode, and foreign keys.
+        """Create a new SQLite connection tuned for SSD/SD-card longevity.
 
         Returns:
-            Configured SQLite connection with Row factory.
+            Configured sqlite3.Connection instance.
 
         Raises:
             DatabaseError: If connection creation fails.
         """
         try:
             conn = sqlite3.connect(
-                self.db_file, 
+                self.db_file,
                 check_same_thread=False,
-                timeout=DatabaseDefaults.CONNECT_TIMEOUT
+                timeout=DatabaseDefaults.CONNECT_TIMEOUT,
             )
             conn.row_factory = sqlite3.Row
-            
-            # Enable foreign key constraints for CASCADE
-            conn.execute("PRAGMA foreign_keys = ON")
-            
-            # This makes SQLite wait and retry if database is locked
-            conn.execute(f"PRAGMA busy_timeout = {DatabaseDefaults.BUSY_TIMEOUT}")
-            
-            # Enable WAL mode for better concurrency
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA temp_store=memory")
-            conn.execute(f"PRAGMA mmap_size={DatabaseDefaults.MMAP_SIZE}")
-            
+            for pragma in (
+                "PRAGMA journal_mode = WAL",
+                "PRAGMA synchronous = NORMAL",
+                f"PRAGMA busy_timeout = {DatabaseDefaults.BUSY_TIMEOUT_MS}",
+                f"PRAGMA journal_size_limit = {DatabaseDefaults.JOURNAL_SIZE_LIMIT}",
+                f"PRAGMA cache_size = {DatabaseDefaults.CACHE_SIZE_KB}",
+                "PRAGMA temp_store = MEMORY",
+                f"PRAGMA mmap_size = {DatabaseDefaults.MMAP_SIZE}",
+                "PRAGMA foreign_keys = ON",
+            ):
+                conn.execute(pragma)
             return conn
-            
-        except sqlite3.Error as e:
-            raise DatabaseError(f"Failed to create database connection: {e}")
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"Failed to create database connection: {exc}") from exc

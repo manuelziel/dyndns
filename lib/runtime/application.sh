@@ -23,7 +23,7 @@ do_main_work() {
 # systemd-managed start with "readonly database" or similar errors.
 should_delegate_to_systemctl() {
     local service_user="${SERVICE_USER:-root}"
-    local service_name="${SERVICE_NAME:-${SOFTWARE_DIR_NAME}.service}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
 
     if ! command -v systemctl >/dev/null 2>&1; then
         return 1
@@ -60,13 +60,13 @@ send_signal() {
 
 start_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-    local service_name="${SERVICE_NAME:-${SOFTWARE_DIR_NAME}.service}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
 
     print_info "Starting ${software_name}..."
 
     if is_running; then
         print_warning "${software_name} is already running"
-        return $?
+        return 0
     fi
 
     # Delegate to systemd so the daemon runs under the configured SERVICE_USER
@@ -82,9 +82,8 @@ start_application() {
 
 stop_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-    local service_name="${SERVICE_NAME:-${SOFTWARE_DIR_NAME}.service}"
-    local pid_file="${PID_FILE}"
-    local python_script="${PYTHON_SCRIPT}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
+    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
     local count=0
     local max_wait=10
 
@@ -171,7 +170,6 @@ restart_application() {
 configure_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local config_file="${CONFIG_FILE:-"[CONFIG_FILE]"}"
-    local pid_file="${PID_FILE}"
 
     print_section "Configuring ${software_name}"
 

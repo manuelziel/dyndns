@@ -136,7 +136,8 @@ class RESTRecordHandler:
             return None
 
         provider_zone_id = provider_zone["id"]
-        self.database.update_zone(zone["id"], provider_zone_id=provider_zone_id)
+        if zone.get("provider_zone_id") != provider_zone_id:
+            self.database.update_zone(zone["id"], provider_zone_id=provider_zone_id)
         return provider_zone_id
 
 
@@ -166,7 +167,8 @@ class RESTRecordHandler:
                 None,
             )
             if provider_record:
-                self.database.update_record_provider_id(db_record["id"], provider_record["id"])
+                if db_record.get("provider_record_id") != provider_record["id"]:
+                    self.database.update_record_provider_id(db_record["id"], provider_record["id"])
                 matched_count += 1
                 self.logger.debug(
                     f"  Matched '{db_record['record_name']}' ({db_record['record_type']}) "
