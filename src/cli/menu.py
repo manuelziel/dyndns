@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Base CLI menu module.
+"""Abstract base menu class for interactive TUI administration.
 
-This module provides base CLI classes for database-driven applications
-with interactive TUI menus, configuration import/export, and entity management.
-
-Typical usage:
-    >>> menu = ConfigMenu(config, logger)
-    >>> menu.run()
+Provides the main menu event loop and shared import/export workflows for
+concrete CLI menu implementations.
 
 Author: Manuel Ziel
 License: MIT
@@ -16,222 +12,183 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-import os
-from datetime import datetime
-from typing import Any, Optional
 from abc import ABC, abstractmethod
+from datetime import datetime
+import os
+from typing import Any
 
+from ..core.constants import ExportFormat
 from ..core.exceptions import DatabaseError
 from ..utils.colors import Colors
-from .helpers.output import (
-    print_section, print_error, print_success,
-    clear_screen
-)
+from .constants import CLIConfig, MenuChoices
 from .helpers.input import (
-    confirm_action, wait_for_enter, safe_input,
-    resolve_path, is_valid_file_path
+    confirm_action,
+    is_valid_file_path,
+    resolve_path,
+    safe_input,
+    wait_for_enter,
 )
-from src.core.constants import ExportFormat
-from src.cli.constants import MenuChoices, CLIConfig
+from .helpers.output import clear_screen, print_error, print_section, print_success
 
 ################################################################################
 # BASE CONFIGURATION MENU CLASS
 ################################################################################
 
-class ConfigMenu(ABC):
-    """Abstract base class for interactive TUI menus.
 
-    Provides a menu-driven interface for managing database entities,
-    viewing data, and importing/exporting configuration.
+class ConfigMenu(ABC):
+    """Abstract base class for interactive TUI configuration menus.
 
     Attributes:
-        config: ConfigManager instance with database access.
-        logger: LoggerManager instance for logging.
-        db: Database connection from config.
-        importer_class: Concrete importer class to use (must be overridden).
-        exporter_class: Concrete exporter class to use (must be overridden).
+        config: ``ConfigManager`` instance.
+        logger: Logger instance.
+        db: ``Database`` connection pool.
+        importer_class: Concrete ``BaseImporter`` subclass.
+        exporter_class: Concrete ``BaseExporter`` subclass.
     """
 
     importer_class: Any = None
     exporter_class: Any = None
 
-    ############################################################################
-    # Lifecycle Methods
-    ############################################################################
-
     def __init__(self, config: Any, logger: Any) -> None:
-        """Initialize configuration menu.
+        """Initialize configuration menu and verify database availability.
 
         Args:
-            config: ConfigManager instance with database access.
-            logger: LoggerManager instance for logging.
+            config: ``ConfigManager`` instance.
+            logger: Logger instance.
 
         Raises:
-            DatabaseError: If database is not initialized.
+            DatabaseError: If ``config.db`` is ``None``.
         """
         self.config = config
         self.logger = logger
         self.db = config.db
-        
         if self.db is None:
             raise DatabaseError("Database not initialized.")
-    
 
     def run(self) -> int:
-        """Run main menu loop.
+        """Execute the interactive main menu loop until exit or EOF.
 
         Returns:
-            Exit code (0 for success).
+            Exit code (``0`` on clean exit).
         """
         while True:
             clear_screen()
             self.print_header()
             max_choice = self.print_menu()
-            
-            choice = safe_input(f"Enter your choice ({MenuChoices.EXIT}-{max_choice}): ").strip()
-            
             try:
-                if choice == MenuChoices.EXIT:
-                    break
-                self.handle_choice(choice)
+                choice = safe_input(
+                    f"Enter your choice ({MenuChoices.EXIT}-{max_choice}): "
+                ).strip()
             except KeyboardInterrupt:
-                print("\n\nOperation cancelled by user.")
-                wait_for_enter()
-            except Exception as e:
-                print_error(f"Critical Error: {e}")
-                self.logger.error(f"Menu error: {e}")
-                wait_for_enter()
-        
+                print()
+                break
+            if choice == MenuChoices.EXIT:
+                break
+            self._dispatch_choice_safely(choice)
         return 0
 
+    def _dispatch_choice_safely(self, choice: str) -> None:
+        """Invoke ``handle_choice`` while catching interactive cancellations/errors.
+
+        Args:
+            choice: User-entered option key.
+        """
+        try:
+            self.handle_choice(choice)
+        except KeyboardInterrupt:
+            print("\n\nOperation cancelled by user.")
+            wait_for_enter()
+        except Exception as exc:
+            print_error(f"Critical Error: {exc}")
+            self.logger.error(f"Menu error: {exc}")
+            wait_for_enter()
 
     ############################################################################
-    # Abstract Methods - Must be implemented in subclass
+    # ABSTRACT INTERFACE
     ############################################################################
 
     @abstractmethod
     def print_menu(self) -> int:
-        """Print main menu options.
-
-        Returns:
-            Maximum valid choice number.
-        """
-        pass
-
+        """Render menu options and return the highest valid option number."""
 
     @abstractmethod
     def handle_choice(self, choice: str) -> None:
-        """Handle user menu choice.
-
-        Args:
-            choice: The user's input string.
-        """
-        pass
-
+        """Dispatch a single user menu selection."""
 
     @abstractmethod
     def manage_zones(self) -> None:
-        """Manage configured zones."""
-        pass
-
+        """Open the DNS zone management submenu."""
 
     @abstractmethod
     def manage_records(self) -> None:
-        """Manage DNS records."""
-        pass
-
+        """Open the DNS record management submenu."""
 
     @abstractmethod
     def view_status(self) -> None:
-        """View current IP addresses and database record statuses."""
-        pass
-
+        """Display live public IPs and stored DNS record status."""
 
     ############################################################################
-    # Concrete Implementations
+    # SHARED IMPORT & EXPORT WORKFLOWS
     ############################################################################
 
     def print_header(self) -> None:
-        """Print menu header (optional override).
-
-        Modern CLIs skip banners for cleaner output.
-        """
-        pass
-
+        """Optional header hook prior to ``print_menu``."""
 
     def import_config(self) -> None:
-        """Launch configuration importer.
-
-        Uses the class-linked importer specified in importer_class.
-        """
+        """Prompt for a backup file path and run ``importer_class``."""
         if not self.importer_class:
             print_error("Importer class not configured.")
             wait_for_enter()
             return
-
         print_section("Import Configuration")
-        file_path = safe_input("\nEnter file path to import: ").strip()
-        if not file_path:
-            print_error("No file specified.")
+        raw_path = safe_input("\nEnter file path to import: ").strip()
+        if not raw_path or not is_valid_file_path(raw_path, must_exist=True):
+            print_error(f"File not found or invalid: {raw_path or '(empty)'}")
             wait_for_enter()
             return
-        if not is_valid_file_path(file_path, must_exist=True):
-            print_error(f"File not found or invalid: {file_path}")
-            wait_for_enter()
-            return
-
-        file_path = resolve_path(file_path)
+        file_path = resolve_path(raw_path)
         overwrite = confirm_action("Overwrite existing data?", default=False)
         print(f"\nImporting from {file_path}...")
-        importer = self.importer_class(self.config, self.logger)
-        result = importer.import_from_file(file_path, overwrite=overwrite)
+        result = self.importer_class(self.config, self.logger).import_from_file(
+            file_path, overwrite=overwrite
+        )
         if result == 0:
             print_success("Import completed successfully!")
         else:
             print_error("Import failed. Check logs for details.")
         wait_for_enter()
 
-
     def export_config(self) -> None:
-        """Launch configuration exporter with smart defaults.
-
-        Uses the class-linked exporter specified in exporter_class.
-        """
+        """Prompt for an export path/format and run ``exporter_class``."""
         if not self.exporter_class:
             print_error("Exporter class not configured.")
             wait_for_enter()
             return
-
         output_file = self._prompt_export_path()
         if not output_file:
             return
-
         format_type = self._resolve_export_format(output_file)
         print("\nExporting configuration...")
-        exporter = self.exporter_class(self.config, self.logger)
-        result = exporter.export_to_file(output_file, format_type=format_type)
+        result = self.exporter_class(self.config, self.logger).export_to_file(
+            output_file, format_type=format_type
+        )
         if result == 0:
             print_success(f"Configuration exported to: {output_file}")
         else:
             print_error("Export failed. Check logs for details.")
         wait_for_enter()
 
-
-    def _prompt_export_path(self) -> Optional[str]:
-        """Prompt user for configuration export file path.
+    def _prompt_export_path(self) -> str | None:
+        """Prompt user for a writable export file path with timestamped default.
 
         Returns:
-            Resolved output file path string or None if invalid.
+            Resolved file path or ``None`` if invalid.
         """
         print_section("Export Configuration")
         timestamp = datetime.now().strftime(CLIConfig.TIMESTAMP_FORMAT)
         default_filename = f"config-export_{timestamp}{ExportFormat.EXT_YAML}"
         default_path = os.path.expanduser(f"~/{default_filename}")
         print(f"\n{Colors.DIM}Default location:{Colors.NC} {Colors.CYAN}{default_path}{Colors.NC}\n")
-        print(f"{Colors.DIM}Options:{Colors.NC}")
-        print(f"{Colors.DIM}  • Press Enter: Use default location{Colors.NC}")
-        print(f"{Colors.DIM}  • Enter custom path: {Colors.CYAN}/path/to/your/config{ExportFormat.EXT_YAML}{Colors.NC}\n")
-
         output_file = safe_input(f"Output file path [default: {default_filename}]: ").strip()
         if not output_file:
             return default_path
@@ -241,20 +198,26 @@ class ConfigMenu(ABC):
             return None
         return resolve_path(output_file)
 
-
-    def _resolve_export_format(self, output_file: str) -> str:
-        """Determine export format from file extension or user prompt.
+    @staticmethod
+    def _resolve_export_format(output_file: str) -> str:
+        """Infer export format from file extension or prompt the user.
 
         Args:
-            output_file: Target file path.
+            output_file: Target export file path.
 
         Returns:
-            Export format identifier (`yaml` or `json`).
+            ``'yaml'`` or ``'json'``.
         """
         file_ext = os.path.splitext(output_file)[1].lower()
-        if file_ext in [ExportFormat.EXT_YAML, ExportFormat.EXT_YML]:
+        if file_ext in (ExportFormat.EXT_YAML, ExportFormat.EXT_YML):
             return ExportFormat.YAML
         if file_ext == ExportFormat.EXT_JSON:
             return ExportFormat.JSON
-        choice = safe_input(f"Format ({ExportFormat.YAML}/{ExportFormat.JSON}) [{ExportFormat.YAML}]: ").strip().lower()
-        return choice if choice in [ExportFormat.YAML, ExportFormat.JSON] else ExportFormat.YAML
+        choice = (
+            safe_input(
+                f"Format ({ExportFormat.YAML}/{ExportFormat.JSON}) [{ExportFormat.YAML}]: "
+            )
+            .strip()
+            .lower()
+        )
+        return choice if ExportFormat.is_valid(choice) else ExportFormat.YAML

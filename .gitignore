@@ -50,11 +50,14 @@ ENV/
 Thumbs.db
 
 # Logs
+logs/
 *.log
 
 # Project Resources
 _project-resources/
 
 # Temporary files
+.data/
+.run/
 *.tmp
 *.temp

@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.4] - 2026-11-14
+### Added
+- Add stateless `dyndns validate` command for `config.toml` syntax and schema checks
+- Add applied standards traceability and CLI/TUI UX mapping (`design_guidelines.md`)
+
+### Changed
+- Replace `systemd-python` C dependency with pure-Python `JournaldSocketHandler`
+- Improve HTTP session pooling, `Retry-After` backoff (`429`/`5xx`), and module SRP splits
+- Align CLI/TUI prompts (`[y/N]`), symbols, and `NO_COLOR`/`TERM=dumb` handling with template `v0.0.17`
+
+### Fixed
+- Harden daemon PID/cmdline checks, `flock` startup locking, and re-entrant signal handlers
+- Preserve cached public IP addresses across transient network outages
+- Keep `stdout` strictly machine-readable during `dyndns export` and route logs/errors to `stderr`
+
+### Security
+- Enforce `O_NOFOLLOW` symlink protection and strict `0640`/`0600` modes on configs, keys, and exports
+- Redact secret query tokens (`?q=...`) and credentials across all log formatters
+- Harden `systemd` unit sandboxing (`StateDirectory`, `ProtectSystem=full`, device/kernel isolation)
+
 ## [1.0.3] - 2026-11-08
 ### Changed
 - Optimize SQLite database for SSD/SD-card wear-leveling and query performance

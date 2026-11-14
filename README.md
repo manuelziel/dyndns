@@ -4,7 +4,23 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://www.linux.org/)
 
-Automatically update IONOS DNS records (A/AAAA) for domains with dynamic IP addresses. Built for reliability with encrypted API key storage, systemd integration, and interactive CLI configuration.
+Automatically update IONOS DNS records (`A`/`AAAA`) for domains with dynamic IPv4/IPv6 addresses. Built for unattended reliability on Linux & Raspberry Pi OS with Fernet-encrypted credential storage, wear-leveled SQLite WAL persistence, native systemd journald socket logging, and interactive CLI management.
+
+---
+
+## Applied Standards & Specifications
+
+| Domain          | Standards                              | Scope in DynDNS                    |
+| --------------- | -------------------------------------- | ---------------------------------- |
+| DNS & Naming    | `RFC 1035`, `RFC 2136`, `RFC 3596`     | Domain syntax, `A`/`AAAA` & TTL    |
+| IP Addressing   | `RFC 791`, `RFC 4291`, `EUI-64`        | Strict IP validation & SLAAC guide |
+| HTTP & REST API | `RFC 9110`, `RFC 6585` (`429`)         | Session pool, `updateUrl` & retry  |
+| System & Init   | `FHS 3.0`, `POSIX.1`, `systemd(5)`     | FHS paths, signals & strict unit   |
+| CLI & TUI UX    | `POSIX.1-2017`, `clig.dev`, `NO_COLOR` | Stream split, symbols & safe menus |
+| App Security    | `OWASP ASVS 4.0`, `API Top 10`         | URI/key redaction & `0640`/`0600`  |
+| Cryptography    | `Fernet` (`AES-128-CBC`, `RFC 2104`)   | Encrypted API keys (`0600` key)    |
+| Persistence     | `SQLite WAL`, `ACID`, `TOML 1.0`       | Wear-leveled WAL pool & config     |
+| Governance      | `SemVer 2.0.0`, `PEP 8/484`, `MIT`     | `CHANGELOG` SSoT, DAG & types      |
 
 ---
 
@@ -19,16 +35,20 @@ sudo ./setup.sh
 # 2. Configure zones and API keys
 sudo dyndns config
 
-# 3. Enable and start service
+# 3. Validate TOML configuration (optional)
+sudo dyndns validate
+
+# 4. Enable and start service
 sudo systemctl enable --now dyndns
 ```
+
 ---
 
 ## Requirements
 
 - IONOS account with DNS API access ([Get API credentials](https://developer.hosting.ionos.de/docs/dns))
 - Python 3.11 or higher
-- Linux system with systemd (for daemon mode)
+- Linux system with systemd (Debian, Ubuntu, Raspberry Pi OS)
 - Existing DNS zone for your domain
 
 ---
@@ -36,13 +56,16 @@ sudo systemctl enable --now dyndns
 ## Installation
 
 ```bash
-# Clone and install
+# Fresh installation
 git clone https://github.com/manuelziel/dyndns.git
 cd dyndns
-sudo ./setup.sh
+sudo ./setup.sh install
+
+# Update code, config & virtualenv in-place (preserves /var/lib/dyndns database & keys)
+sudo ./setup.sh update
 ```
 
-**Options**: `--force` (reinstall), `--interactive` (menu mode)
+**Setup Actions**: `install`, `update`, `reinstall` (preserves `/var/lib/dyndns` database & encryption key, refreshes `/etc/dyndns/config.toml`), `uninstall` (keeps `/var/lib/dyndns`), `purge` (removes config & data), `--interactive` (menu mode).
 
 ---
 
@@ -54,14 +77,14 @@ sudo ./setup.sh
 sudo dyndns config
 ```
 
-You'll be prompted for:
-- **Zone name**: Your domain (e.g., `example.com`)
-- **API credentials**: IONOS Bulk ID and API Key
-- **DNS records**: A/AAAA records to manage (e.g., `@`, `www`)
+You will be prompted for:
+- **Zone name**: Your domain (`RFC 1035` validated, e.g. `example.com`)
+- **API credentials**: IONOS Bulk ID and API Key (stored Fernet-encrypted in SQLite)
+- **DNS records**: `A`/`AAAA` records to manage (e.g. `@`, `www`)
 
-### Configuration File
+### Configuration File & Validation
 
-Edit `/etc/dyndns/config.toml` for advanced settings:
+Edit `/etc/dyndns/config.toml` (`0640` `root:dyndns`) for runtime settings and verify changes before restarting:
 
 ```toml
 [debug]
@@ -71,12 +94,22 @@ level = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 ipv4_enabled = true
 ipv6_enabled = true
 
+[dns]
+update_method = "dyndns"  # "dyndns" (native updateUrl) or "rest"
+default_ttl = 3600
+
 [daemon]
 check_interval = 300  # Check IP every 5 minutes
-sync_checks = true  # Enable automatic orphan detection (recommended)
+sync_checks = true    # Enable automatic orphan detection (recommended)
 ```
 
-**Note**: Zones and API credentials are stored in database, not config file. Use `sudo dyndns config` to manage.
+```bash
+# Validate active configuration or an arbitrary TOML file
+sudo dyndns validate
+./dyndns.py validate --file ./config.toml
+```
+
+**Note**: Zones and API credentials are stored encrypted in `/var/lib/dyndns/dyndns.db`, not in `config.toml`. Use `sudo dyndns config` to manage them.
 
 ---
 
@@ -106,25 +139,21 @@ sudo journalctl -u dyndns -n 50 --no-pager
 # Follow live
 sudo journalctl -u dyndns -f
 
-# Filter by time
+# Filter by time or priority
 sudo journalctl -u dyndns --since "1 hour ago"
-sudo journalctl -u dyndns --since today
-
-# Only errors/warnings
 sudo journalctl -u dyndns -p warning
 ```
 
-### Backup/Restore
+### Backup / Restore
 
 ```bash
-# Export configuration
+# Export configuration (creates restricted 0600 file; pure YAML/JSON when piped to stdout)
 sudo dyndns export --output backup.yaml
+sudo dyndns export --format json > backup.json
 
 # Import configuration
 sudo dyndns import backup.yaml --overwrite
 ```
-
-**Note**: Export creates `~/config-export_YYYYMMDD_HHMMSS.yaml` by default. Records auto-sync on next daemon run after import.
 
 ---
 
@@ -132,103 +161,75 @@ sudo dyndns import backup.yaml --overwrite
 
 ### Automatic Daemon Sync & Self-Healing (Recommended)
 
-The daemon (`dyndns.service`) automatically verifies and heals your DNS configuration at startup and every check interval when `sync_checks = true` (enabled by default in `/etc/dyndns/config.toml`):
+The daemon (`dyndns.service`) automatically verifies and heals your DNS configuration at startup and on each check interval when `sync_checks = true`:
 
-- **Orphan Detection & Recovery (`dyndns` + `rest` modes)**: Detects if configured `A`/`AAAA` records (`@`, `www`, etc.) were deleted or modified on the IONOS provider dashboard → recreates missing entries automatically via REST API (`POST /v1/zones/{id}/records`).
-- **DynDNS Bundle Auto-Binding (`dyndns` mode)**: After restoring any missing subdomains on IONOS, the daemon automatically activates a fresh DynDNS `updateUrl` bundle (`bulkId`) and executes it immediately with your current IPv4/IPv6 so all recovered records get populated instantly.
-- **Provider ID Recovery**: Missing `provider_record_id` or out-of-sync local IDs → syncs zone → recreates or links records seamlessly.
-- **Real-Time CLI Execution**: Adding, editing, or deleting records inside `sudo dyndns config -> Option 2 (Manage Zones) / Option 3 (Manage DNS Records)` immediately updates the IONOS DynDNS bundle and executes the `updateUrl` in real time. New subdomains go live within seconds without waiting for the next daemon check cycle.
+- **Orphan Detection & Recovery (`dyndns` + `rest` modes)**: Detects if configured `A`/`AAAA` records (`@`, `www`, etc.) were deleted on the IONOS dashboard and recreates missing entries automatically via `POST /v1/zones/{id}/records`.
+- **DynDNS Bundle Auto-Binding (`dyndns` mode)**: After restoring missing subdomains on IONOS, the daemon activates a fresh DynDNS `updateUrl` bundle (`bulkId`) and executes it immediately with your current IPv4/IPv6.
+- **Transient Outage Resilience**: If external IP detection endpoints temporarily time out, cached local IP state is preserved without triggering false updates or unnecessary flash writes.
+- **Real-Time CLI Execution**: Adding, editing, or deleting records inside `sudo dyndns config` immediately updates the IONOS DynDNS bundle and executes the `updateUrl` in real time.
 
 ### Manual Sync Options
 
-**Zone Sync** - Reconcile database with provider:
-```bash
-sudo dyndns config -> "3. Manage DNS Records" -> "5. Sync records from provider"
-```
-Use when: After import, manual changes at IONOS dashboard, or to verify sync status
-
-**Force Update** - Update all records immediately:
-```bash
-sudo dyndns config -> "4. Force DNS Update"
-```
-Use when: Testing, force IP refresh, or records deleted from provider
+- **Zone Sync** (`sudo dyndns config -> 3) Manage DNS Records -> 5) Sync records from provider`): Reconcile local database state with remote provider records after manual dashboard changes or imports.
+- **Force Update** (`sudo dyndns config -> 4) Force DNS Update`): Immediately push current public IPv4/IPv6 addresses to all enabled zones and records.
 
 ---
 
 ## Troubleshooting
 
-### Service Issues
+### Service & API Issues
 
-```bash
-# Check status and logs
-sudo systemctl status dyndns
-sudo journalctl -u dyndns -n 50
-
-# Restart service
-sudo systemctl restart dyndns
-```
-
-### API/Network Issues
-
-- **Authentication error:** Update credentials via `sudo dyndns config`
-- **IPv6 disabled:** Edit `config.toml` -> `ipv6_enabled = false`
-- **Firewall:** Ensure HTTPS (443) outbound allowed
+- **Service health**: Check `sudo systemctl status dyndns` and `sudo journalctl -u dyndns -n 50 --no-pager`.
+- **Authentication error**: Update credentials via `sudo dyndns config`. Query tokens (`?q=...`) and `X-API-Key` headers are automatically redacted as `**REDACTED**` in logs.
+- **IPv6 disabled**: Set `ipv6_enabled = false` in `/etc/dyndns/config.toml` and run `sudo dyndns validate`.
+- **Firewall**: Ensure outbound HTTPS (`TCP 443`) is allowed.
 
 ### Server Network & Router Best Practices (IPv6 / Timeouts)
 
-If your DNS records are updated successfully (`[DYNDNS TRIGGERED] Record updated`), but accessing your domain from a web browser yields `ERR_CONNECTION_TIMED_OUT`, verify the following server and router configuration settings:
+If DNS records update cleanly (`Record updated`), but browser access yields `ERR_CONNECTION_TIMED_OUT`, verify your host SLAAC and router port-forwarding settings:
 
-#### 1. Force Permanent Static IPv6 Interface-ID (EUI-64)
-Modern Linux systems (with `NetworkManager` or `dhcpcd`) default to RFC 7217 Stable-Privacy or RFC 4941 Privacy Extensions. These generate hashed or temporary IPv6 Interface-IDs (`::xxxx:xxxx:xxxx:xxxx`) that may change after OS upgrades, system reboots, or router prefix renewals (`ISP Reconnect`). When this occurs, DynDNS updates the `AAAA` DNS record to the new address, but the router's inbound port forwarding rule still targets the previous Interface-ID, causing connection timeouts.
-
-To ensure your server's IPv6 Interface-ID remains permanently tied to your hardware MAC address across all ISP reboots (`addr-gen-mode eui64`):
+#### 1. Force Permanent Static IPv6 Interface-ID (`EUI-64`)
+Modern Linux distributions default to `RFC 7217` Stable-Privacy or `RFC 4941` temporary addresses, which can rotate the IPv6 suffix across reboots or prefix renewals while router port-forwarding still points to the old Interface-ID. Bind the suffix permanently to the hardware MAC (`eui64`):
 
 ```bash
-# For NetworkManager (Debian, Ubuntu, Fedora, Raspberry Pi OS Bookworm):
-# 1. Identify active connection name (e.g., 'Wired connection 1' or 'eth0'):
+# Identify active NetworkManager connection:
 nmcli -f NAME,DEVICE connection show --active
 
-# 2. Disable privacy extensions and enforce EUI-64 MAC derivation:
+# Disable privacy extensions and enforce EUI-64 MAC derivation:
 sudo nmcli connection modify "Wired connection 1" ipv6.ip6-privacy 0 ipv6.addr-gen-mode eui64
 sudo nmcli connection up "Wired connection 1"
 
-# 3. Verify permanent EUI-64 Interface-ID (middle insertion FF:FE):
+# Verify permanent EUI-64 Interface-ID:
 ip -br -6 a
 ```
 
-#### 2. Synchronize Router Port Forwarding
-In your router settings:
-- Set the **IPv6-Interface-ID** field to exactly match your EUI-64 suffix from `ip -br -6 a` (e.g., `::2ecf:67ff:fefb:d150`).
-- Check the box for *"Always assign this Interface-ID"*.
+#### 2. Synchronize Router Port Forwarding & Rebind Protection
+- Set your router's **IPv6 Interface-ID** target to match the `EUI-64` suffix from `ip -br -6 a` and enable *"Always assign this Interface-ID"*.
+- For LAN loopback access (`Split-Horizon DNS`), add your domains to the router's **DNS Rebind Protection** exception list.
 
-#### 3. LAN Loopback & Split-Horizon DNS (`DNS-Rebind-Protection`)
-If your domain works externally (`Smartphone via 4G/5G`) but times out when accessed from inside your home network (`PC / Laptop`):
-- **Router Rebind Protection:** Add your domains (`yourdomain.com` and `www.yourdomain.com`) to the router's **DNS Rebind Protection** exception list.
-
-### Reinstall / Uninstall
+### Update / Reinstall / Purge
 
 ```bash
-# Keep config
-sudo ./setup.sh install --force
+# In-place update (refreshes binaries & /etc/dyndns/config.toml; preserves /var/lib/dyndns)
+sudo ./setup.sh update
 
-# Fresh install (removes config but keeps data)
+# Full reinstall preserving /var/lib/dyndns database, .encryption_key, and venv
+sudo ./setup.sh reinstall
+
+# Uninstall binaries/service while keeping /var/lib/dyndns data
 sudo ./setup.sh uninstall
-sudo ./setup.sh install
 
-# Complete removal including all data
+# Complete removal including /etc/dyndns and /var/lib/dyndns
 sudo ./setup.sh purge
-# or
-sudo ./setup.sh uninstall --purge
 ```
 
 ---
 
-## Advanced
+## Security & Architecture Highlights
 
-- **Encryption**: API keys use Fernet (AES-128-CBC with HMAC-SHA256). Key at `/var/lib/dyndns/.encryption_key` (0600 permissions)
-- **Backup encryption key**: `sudo cp /var/lib/dyndns/.encryption_key ~/backup.key`
-- **Export/Import**: Export creates YAML with decrypted API keys for editing
-- **Systemd**: Service is hardened with `ProtectSystem=full`, `PrivateTmp`, `NoNewPrivileges` (see `SERVICE_*` in `lib/core/config.sh`). Logs via `journalctl -u dyndns`
+- **Encryption at Rest**: API keys are encrypted with `Fernet` (`AES-128-CBC` + `HMAC-SHA256`, key file `/var/lib/dyndns/.encryption_key` enforced at `0600` without symlink traversal).
+- **Log & URI Redaction**: `sanitize_log_uri()` across `PlainFormatter`, `ColoredFormatter`, and `RingBufferHandler` automatically strips `?q=...` DynDNS tokens and credentials before writing to `stderr` or `/run/systemd/journal/socket`.
+- **Systemd Sandboxing**: Hardened unit (`StateDirectory=dyndns`, `ProtectSystem=full`, `ProtectHome=true`, `PrivateTmp=true`, `PrivateDevices=true`, `ProtectKernelTunables=true`, `ProtectControlGroups=true`, `NoNewPrivileges=true`, `RestrictSUIDSGID=true`, `LockPersonality=true`) running unprivileged as `dyndns`.
 
 ---
 

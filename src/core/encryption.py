@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
 """Encryption manager for sensitive data protection.
 
-This module provides encryption and decryption of sensitive data using
-Fernet symmetric encryption (AES-128-CBC with HMAC-SHA256).
-
-The encryption key is auto-generated if not exists and stored with
-secure permissions (0o600). Key rotation is not yet implemented.
-
-Typical usage:
-    >>> enc = EncryptionManager('/var/lib/dyndns/.encryption_key')
-    >>> encrypted = enc.encrypt('api-secret-key')
-    >>> decrypted = enc.decrypt(encrypted)
+Provides symmetric encryption and decryption of sensitive data using Fernet
+(AES-128-CBC with HMAC-SHA256). Auto-generates the encryption key if missing
+and enforces symlink-safe ``0o600`` permissions.
 
 Author: Manuel Ziel
 License: MIT
@@ -21,7 +14,7 @@ License: MIT
 ################################################################################
 
 import os
-from typing import Optional, Any
+from typing import Any
 
 try:
     from cryptography.fernet import Fernet
@@ -32,26 +25,21 @@ from .constants import EncryptionDefaults
 from .exceptions import EncryptionError, ValidationError
 from .ownership import ensure_service_ownership
 
-
 ################################################################################
 # ENCRYPTION MANAGER CLASS
 ################################################################################
 
+
 class EncryptionManager:
     """Encryption manager using Fernet (AES-128-CBC + HMAC-SHA256).
-
-    Provides symmetric encryption for sensitive data. Auto-generates
-    encryption key if not exists and enforces 0o600 permissions.
 
     Attributes:
         key_file: Path to the encryption key file.
         logger: Optional logger instance for error reporting.
     """
-    
-    def __init__(self, key_file_path: str, logger: Optional[Any] = None) -> None:
-        """Initialize encryption manager.
 
-        Creates the encryption key file if it does not exist.
+    def __init__(self, key_file_path: str, logger: Any | None = None) -> None:
+        """Initialize encryption manager and load or generate the Fernet key.
 
         Args:
             key_file_path: Absolute path to encryption key file.
@@ -62,44 +50,41 @@ class EncryptionManager:
         """
         self.key_file = key_file_path
         self.logger = logger
-        self._encryption_key = None
-        self._cipher = None
-        
+        self._encryption_key: bytes | None = None
+        self._cipher: Any | None = None
+
         self._setup_encryption()
-    
+
     ############################################################################
     # PUBLIC INTERFACE - Encryption/Decryption Operations
     ############################################################################
-    
+
     def encrypt(self, data: str) -> str:
-        """Encrypt a string using Fernet encryption.
+        """Encrypt a plain-text string using Fernet symmetric encryption.
 
         Args:
-            data: Plain text string to encrypt. Must not be empty.
+            data: Plain text string to encrypt (must not be empty).
 
         Returns:
             Base64-encoded encrypted string.
 
         Raises:
-            EncryptionError: If encryption fails or cipher not initialized.
-            ValidationError: If data is empty.
+            EncryptionError: If encryption fails or cipher is uninitialized.
+            ValidationError: If ``data`` is empty.
         """
         if not self._cipher:
             raise EncryptionError("Encryption not initialized")
-        
         if not data:
             raise ValidationError("Cannot encrypt empty data")
-        
         try:
-            encrypted = self._cipher.encrypt(data.encode()).decode()
-            return encrypted
-        except Exception as e:
+            return self._cipher.encrypt(data.encode()).decode()
+        except Exception as exc:
             if self.logger:
-                self.logger.error(f"Encryption failed: {e}")
-            raise EncryptionError(f"Encryption failed: {e}")
-    
+                self.logger.error(f"Encryption failed: {exc}")
+            raise EncryptionError(f"Encryption failed: {exc}") from exc
+
     def decrypt(self, encrypted_data: str) -> str:
-        """Decrypt Fernet-encrypted data.
+        """Decrypt Fernet-encrypted data back to plain text.
 
         Args:
             encrypted_data: Base64-encoded encrypted string.
@@ -108,50 +93,41 @@ class EncryptionManager:
             Decrypted plain text string.
 
         Raises:
-            EncryptionError: If decryption fails or cipher not initialized.
-            ValidationError: If encrypted_data is empty.
+            EncryptionError: If decryption fails or cipher is uninitialized.
+            ValidationError: If ``encrypted_data`` is empty.
         """
         if not self._cipher:
             raise EncryptionError("Encryption not initialized")
-        
         if not encrypted_data:
             raise ValidationError("Cannot decrypt empty data")
-        
         try:
-            decrypted = self._cipher.decrypt(encrypted_data.encode()).decode()
-            return decrypted
-        except Exception as e:
+            return self._cipher.decrypt(encrypted_data.encode()).decode()
+        except Exception as exc:
             if self.logger:
-                self.logger.error(f"Decryption failed: {e}")
-            raise EncryptionError(f"Decryption failed: {e}")
-    
-    def rotate_key(self, new_key_file_path: str) -> None:
-        """Rotate the encryption key.
+                self.logger.error(f"Decryption failed: {exc}")
+            raise EncryptionError(f"Decryption failed: {exc}") from exc
 
-        Note:
-            NOT YET IMPLEMENTED. Requires re-encrypting all existing
-            encrypted data in the database.
+    def rotate_key(self, new_key_file_path: str) -> None:
+        """Rotate the encryption key (not yet implemented).
 
         Args:
             new_key_file_path: Path for the new encryption key file.
 
         Raises:
-            NotImplementedError: Always raised as feature is not implemented.
+            NotImplementedError: Always raised as key rotation is not implemented.
         """
+        del new_key_file_path
         raise NotImplementedError("Key rotation not yet implemented")
-    
+
     ############################################################################
     # PRIVATE METHODS - Internal Implementation
     ############################################################################
-    
-    def _setup_encryption(self) -> None:
-        """Setup encryption key and cipher instance.
 
-        Loads existing key from file or generates a new one. Sets file
-        permissions to 0o600 for security.
+    def _setup_encryption(self) -> None:
+        """Load or generate the Fernet key and initialize the cipher instance.
 
         Raises:
-            EncryptionError: If key loading or generation fails.
+            EncryptionError: If key loading, validation, or generation fails.
         """
         if Fernet is None:
             raise EncryptionError("cryptography package is required for EncryptionManager")
@@ -163,34 +139,70 @@ class EncryptionManager:
                     f"Invalid encryption key length: {len(self._encryption_key)} (expected {expected_len})"
                 )
             self._cipher = Fernet(self._encryption_key)
-        except Exception as e:
+        except Exception as exc:
             if self.logger:
-                self.logger.error(f"Encryption setup failed: {e}")
-            raise EncryptionError(f"Failed to setup encryption: {e}")
+                self.logger.error(f"Encryption setup failed: {exc}")
+            raise EncryptionError(f"Failed to setup encryption: {exc}") from exc
 
     def _load_or_generate_key(self) -> bytes:
         """Load existing Fernet key from disk or generate and persist a new one.
 
         Returns:
             Raw Fernet key bytes.
+
+        Raises:
+            OSError: If the key path is a symbolic link or file I/O fails.
         """
         key_mode = EncryptionDefaults.KEY_FILE_MODE
+        if os.path.islink(self.key_file):
+            raise OSError(f"Refusing to use symlinked encryption key file: {self.key_file}")
         if os.path.exists(self.key_file):
-            with open(self.key_file, 'rb') as f:
-                key = f.read()
-            if self.logger:
-                self.logger.debug(f"Encryption key loaded from {self.key_file}")
-            ensure_service_ownership(self.key_file, mode=key_mode, logger=self.logger)
-            return key
+            return self._read_existing_key(key_mode)
+        return self._generate_and_save_key(key_mode)
 
+    def _read_existing_key(self, key_mode: int) -> bytes:
+        """Read an existing encryption key file safely without following symlinks.
+
+        Args:
+            key_mode: Target octal file mode to enforce.
+
+        Returns:
+            Raw Fernet key bytes.
+        """
+        fd = os.open(self.key_file, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as handle:
+            key = handle.read()
+        if self.logger:
+            self.logger.debug(f"Encryption key loaded from {self.key_file}")
+        ensure_service_ownership(
+            self.key_file, mode=key_mode, logger=self.logger, private_group=True
+        )
+        return key
+
+    def _generate_and_save_key(self, key_mode: int) -> bytes:
+        """Generate a fresh Fernet key and persist it atomically with ``0600`` mode.
+
+        Args:
+            key_mode: Target octal file mode to enforce.
+
+        Returns:
+            Newly generated Fernet key bytes.
+        """
         key = Fernet.generate_key()
-        os.makedirs(os.path.dirname(self.key_file), exist_ok=True)
-        fd = os.open(self.key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, key_mode)
-        with os.fdopen(fd, 'wb') as f:
-            f.write(key)
-        os.chmod(self.key_file, key_mode)
-        ensure_service_ownership(self.key_file, mode=key_mode, logger=self.logger)
+        parent_dir = os.path.dirname(self.key_file)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+        fd = os.open(self.key_file, flags, key_mode)
+        with os.fdopen(fd, "wb") as handle:
+            os.fchmod(handle.fileno(), key_mode)
+            handle.write(key)
+        ensure_service_ownership(
+            self.key_file, mode=key_mode, logger=self.logger, private_group=True
+        )
         if self.logger:
             self.logger.info(f"Encryption key generated and saved to {self.key_file}")
-            self.logger.warning("IMPORTANT: Backup encryption key - data cannot be decrypted without it")
+            self.logger.warning(
+                "IMPORTANT: Backup encryption key - data cannot be decrypted without it"
+            )
         return key

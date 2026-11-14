@@ -1,23 +1,8 @@
 #!/usr/bin/env python3
 """DynDNS - Dynamic DNS Client for IONOS Provider API.
 
-This package provides all components for the DynDNS daemon application
-with systemd integration, database support, and modular architecture.
-
-Modules:
-    core: Configuration, database, logging, encryption, and exceptions.
-    utils: Color codes and utility functions.
-    application: Main application business logic.
-    daemon: Background process management.
-    api: HTTP client and IONOS API integration.
-    network: Network utilities and IP detection.
-    cli: Command-line interface components.
-
-Typical usage:
-    >>> from src import ConfigManager, LoggerManager, Application
-    >>> config = ConfigManager('/app', '/app/config.toml')
-    >>> logger = LoggerManager.get_logger('dyndns')
-    >>> app = Application(config, logger)
+Provides all components for the DynDNS daemon and CLI application with systemd
+integration, SQLite WAL persistence, encrypted credentials, and modular services.
 
 Author: Manuel Ziel
 License: MIT
@@ -41,20 +26,21 @@ __syslog_identifier__ = AppSettings.SYSLOG_IDENTIFIER
 ################################################################################
 
 from .core import (
-    DynDNSException,
+    APIError,
+    ConfigError,
+    ConfigManager,
+    Database,
     DatabaseError,
     DatabaseLockedError,
-    ConfigError,
+    DynDNSException,
     EncryptionError,
-    NetworkError,
-    APIError,
-    RecordNotFoundError,
-    ZoneNotFoundError,
-    ValidationError,
-    LoggerManager,
-    Database,
-    ConfigManager,
     EncryptionManager,
+    LoggerManager,
+    NetworkError,
+    RecordNotFoundError,
+    ValidationError,
+    ZoneNotFoundError,
+    sanitize_log_uri,
 )
 from .utils import Colors, LOG_COLORS, LOG_SYMBOLS
 from .network import NetworkData
@@ -62,40 +48,40 @@ from .api import HTTPClient
 from .daemon import DaemonManager
 from .application import Application
 
-
 ################################################################################
 # PUBLIC API
 ################################################################################
 
 __all__ = [
     # Metadata
-    '__version__',
-    '__author__',
-    '__software_name__',
-    '__syslog_identifier__',
+    "__version__",
+    "__author__",
+    "__software_name__",
+    "__syslog_identifier__",
     # Exceptions
-    'DynDNSException',
-    'DatabaseError',
-    'DatabaseLockedError',
-    'ConfigError',
-    'EncryptionError',
-    'NetworkError',
-    'APIError',
-    'RecordNotFoundError',
-    'ZoneNotFoundError',
-    'ValidationError',
+    "APIError",
+    "ConfigError",
+    "DatabaseError",
+    "DatabaseLockedError",
+    "DynDNSException",
+    "EncryptionError",
+    "NetworkError",
+    "RecordNotFoundError",
+    "ValidationError",
+    "ZoneNotFoundError",
     # Core
-    'LoggerManager',
-    'Database',
-    'ConfigManager',
-    'EncryptionManager',
+    "ConfigManager",
+    "Database",
+    "EncryptionManager",
+    "LoggerManager",
+    "sanitize_log_uri",
     # Utils
-    'Colors',
-    'LOG_COLORS',
-    'LOG_SYMBOLS',
+    "Colors",
+    "LOG_COLORS",
+    "LOG_SYMBOLS",
     # Application
-    'Application',
-    'DaemonManager',
-    'NetworkData',
-    'HTTPClient',
+    "Application",
+    "DaemonManager",
+    "HTTPClient",
+    "NetworkData",
 ]

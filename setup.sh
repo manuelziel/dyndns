@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup.sh
+# setup.sh - Interactive and CLI setup, update, uninstall, and purge orchestrator
 #
 # DynDNS
 #
@@ -9,36 +9,36 @@
 # Enable strict error handling
 set -euo pipefail
 
-readonly _DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Load modular components
-# Architecture:
-# - lib/core/     - Shared libraries (setup.sh + dyndns.sh)
-# - lib/setup/    - Setup-only libraries
-# - lib/runtime/  - Runtime-only libraries (dyndns.sh)
-# - lib/modules/  - Optional shared modules
+_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly _DIR="${_script_dir}"
+readonly SETUP_CONTEXT=1
+unset _script_dir
 
 # Load core libraries (shared between setup.sh and dyndns.sh)
+source "${_DIR}/lib/core/config.sh"
 source "${_DIR}/lib/core/colors.sh"
 source "${_DIR}/lib/core/logging.sh"
-source "${_DIR}/lib/core/config.sh"
 source "${_DIR}/lib/core/essentials.sh"
 
-# Load setup-specific libraries
-source "${_DIR}/lib/setup/system.sh"
-source "${_DIR}/lib/setup/install.sh"
-source "${_DIR}/lib/setup/menu.sh"
-
-# Load optional modules based on configuration
+# Load optional shared modules before top-level setup orchestrators
 if [[ "${ENABLE_PYTHON:-0}" -eq 1 ]]; then
     source "${_DIR}/lib/modules/python.sh"
 fi
+
+# Load setup-specific libraries (strict bottom-up DAG)
+source "${_DIR}/lib/setup/system.sh"
+source "${_DIR}/lib/setup/users.sh"
+source "${_DIR}/lib/setup/files.sh"
+source "${_DIR}/lib/setup/systemd.sh"
+source "${_DIR}/lib/setup/install.sh"
+source "${_DIR}/lib/setup/menu.sh"
 
 # Global flags
 QUIET_MODE=0
 FORCE_MODE=0
 SKIP_DEPENDENCIES=0
 PURGE_MODE=0
+INTERACTIVE_MODE=0
 DEBUG_MODE=0
 ACTION=""
 
@@ -56,171 +56,52 @@ cleanup_and_exit() {
     exit "${exit_code}"
 }
 
+_abort_invalid_cli() {
+    show_help
+    cleanup_and_exit 1
+}
+
+_parse_setup_option() {
+    case "$1" in
+        install)                set_single_action "install" "$1" || _abort_invalid_cli ;;
+        update|--upgrade)       set_single_action "update" "$1" || _abort_invalid_cli ;;
+        reinstall|--reinstall)  set_single_action "reinstall" "$1" || _abort_invalid_cli ;;
+        uninstall|--remove)     set_single_action "uninstall" "$1" || _abort_invalid_cli ;;
+        purge)                  set_single_action "purge" "$1" || _abort_invalid_cli ;;
+        status|--info)          set_single_action "status" "$1" || _abort_invalid_cli ;;
+        help|--help|-h)         set_single_action "help" "$1" || _abort_invalid_cli ;;
+        version|--version|-v)   set_single_action "version" "$1" || _abort_invalid_cli ;;
+        --interactive|-i)       INTERACTIVE_MODE=1 ;;
+        --quiet|-q)             QUIET_MODE=1 ;;
+        --force|-f)             FORCE_MODE=1 ;;
+        --no-deps)              SKIP_DEPENDENCIES=1 ;;
+        --debug)                DEBUG_MODE=1 ;;
+        --purge)                PURGE_MODE=1 ;;
+        -*)                     print_error "Unknown option: $1"; _abort_invalid_cli ;;
+        *)                      print_error "Unknown argument: $1"; _abort_invalid_cli ;;
+    esac
+    return 0
+}
+
 parse_arguments() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            install)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="install"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            update|--upgrade)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="update"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            reinstall|--reinstall)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="reinstall"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            uninstall|--remove)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="uninstall"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            purge)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="purge"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            status|--info)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="status"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            help|--help|-h)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="help"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            version|--version|-v)
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="version"
-                    shift
-                else
-                    print_error "Multiple actions specified: $ACTION and $1"
-                    show_help
-                    cleanup_and_exit 1
-                fi
-                ;;
-            --interactive|-i)
-                ACTION="interactive"
-                shift
-                ;;
-                
-            # Flags
-            --quiet|-q)
-                QUIET_MODE=1
-                shift
-                ;;
-            --force|-f)
-                FORCE_MODE=1
-                shift
-                ;;
-            --no-deps)
-                SKIP_DEPENDENCIES=1
-                shift
-                ;;
-            --debug)
-                DEBUG_MODE=1
-                shift
-                ;;
-            --purge)
-                # --purge is both a flag (used with uninstall) and a shortcut
-                # action. Set ACTION too so `setup.sh --purge` alone actually
-                # purges instead of falling through to interactive mode.
-                PURGE_MODE=1
-                if [[ -z "${ACTION:-}" ]]; then
-                    ACTION="purge"
-                fi
-                shift
-                ;;
-                
-            # Error handling
-            -*)
-                print_error "Unknown option: $1"
-                show_help
-                cleanup_and_exit 1
-                ;;
-            *)
-                print_error "Unknown argument: $1"
-                show_help
-                cleanup_and_exit 1
-                ;;
-        esac
+    while [[ "$#" -gt 0 ]]; do
+        _parse_setup_option "$1"
+        shift
     done
-    
-    # Default to interactive if no action specified
     if [[ -z "${ACTION:-}" ]]; then
-        ACTION="interactive"
+        if [[ "${PURGE_MODE}" -eq 1 ]]; then
+            ACTION="purge"
+        else
+            ACTION="interactive"
+        fi
     fi
 }
 
-main() {
-    parse_arguments "$@"
-    
-    local requires_root=false
-    case "$ACTION" in
-        install|update|reinstall|uninstall|purge)
-            requires_root=true
-            ;;
-        interactive)
-            requires_root=true
-            ;;
-    esac
-    
-    if [[ "$requires_root" == true ]]; then
-        if ! check_root; then
-            cleanup_and_exit 1
-        fi
-    fi
-    
+_dispatch_setup_action() {
     case "${ACTION}" in
-        install)
-            do_install
-            ;;
-        update)
-            do_update
-            ;;
-        reinstall)
-            do_reinstall
-            ;;
+        install)     do_install ;;
+        update)      do_update ;;
+        reinstall)   do_reinstall ;;
         uninstall)
             if [[ "${PURGE_MODE}" -eq 1 ]]; then
                 do_purge
@@ -228,28 +109,28 @@ main() {
                 do_uninstall
             fi
             ;;
-        purge)
-            do_purge
-            ;;
-        status)
-            show_status
-            ;;
-        help)
-            show_help
-            ;;
-        version)
-            show_version
-            ;;
-        interactive)
-            show_interactive_menu
-            ;;
+        purge)       do_purge ;;
+        status)      show_status ;;
+        help)        show_help ;;
+        version)     show_version ;;
+        interactive) show_interactive_menu ;;
         *)
             print_error "Unknown action: ${ACTION}"
-            show_help
-            cleanup_and_exit 1
+            _abort_invalid_cli
             ;;
     esac
-    
+}
+
+main() {
+    parse_arguments "$@"
+    case "${ACTION}" in
+        install|update|reinstall|uninstall|purge|interactive)
+            if ! check_root "$@"; then
+                cleanup_and_exit 1
+            fi
+            ;;
+    esac
+    _dispatch_setup_action
     successful_exit 0
 }
 

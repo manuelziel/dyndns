@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """API package for the DynDNS application.
 
-Provides the HTTP client and DNS provider integration client.
+Provides the session-backed ``HTTPClient`` and ``ProviderDNSClient``.
 
 Author: Manuel Ziel
 License: MIT
@@ -19,6 +19,6 @@ from .provider import ProviderDNSClient
 ################################################################################
 
 __all__ = [
-    'HTTPClient',
-    'ProviderDNSClient',
+    "HTTPClient",
+    "ProviderDNSClient",
 ]

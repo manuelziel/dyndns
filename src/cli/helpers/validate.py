@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""CLI validation helpers for domain names and IP addresses.
+"""CLI validation helpers for domain names, IP literals, and filesystem paths.
 
-This module provides common validation utilities used by input prompting
-and network validation routines.
+Uses ``re.fullmatch`` for RFC 1035 domain syntax and Python's standard
+``ipaddress`` module for strict IPv4/IPv6 validation.
 
 Author: Manuel Ziel
 License: MIT
@@ -12,102 +12,111 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
+import ipaddress
 import os
 import re
 
-from src.cli.constants import ValidationRegex, ValidationLimits
+from ..constants import ValidationRegex
 
 ################################################################################
 # VALIDATION UTILITY FUNCTIONS
 ################################################################################
 
+
 def is_valid_domain(domain: str) -> bool:
-    """Validate domain name format according to RFC 1035.
+    """Validate a domain name according to RFC 1035 label rules.
 
     Args:
-        domain: Domain name string to validate.
+        domain: Candidate domain name string.
 
     Returns:
-        True if domain format is valid, False otherwise.
+        True if ``domain`` matches RFC 1035 syntax, False otherwise.
     """
-    return re.match(ValidationRegex.DOMAIN, domain.lower()) is not None
+    if not domain or not domain.strip():
+        return False
+    return re.fullmatch(ValidationRegex.DOMAIN, domain.strip().lower()) is not None
 
 
 def is_valid_ipv4(ip: str) -> bool:
-    """Validate IPv4 address format.
+    """Validate an IPv4 address string using ``ipaddress.IPv4Address``.
 
     Args:
-        ip: IPv4 address string to validate.
+        ip: Candidate IPv4 address string.
 
     Returns:
-        True if address format is valid, False otherwise.
+        True if ``ip`` is a valid canonical IPv4 literal, False otherwise.
     """
-    if not re.match(ValidationRegex.IPV4, ip):
+    if not ip:
         return False
-
-    octets = ip.split('.')
-    return all(ValidationLimits.IPV4_MIN_OCTET <= int(octet) <= ValidationLimits.IPV4_MAX_OCTET for octet in octets)
+    try:
+        ipaddress.IPv4Address(ip.strip())
+        return True
+    except ipaddress.AddressValueError:
+        return False
 
 
 def is_valid_ipv6(ip: str) -> bool:
-    """Validate IPv6 address format.
+    """Validate an IPv6 address string using ``ipaddress.IPv6Address``.
 
     Args:
-        ip: IPv6 address string to validate.
+        ip: Candidate IPv6 address string.
 
     Returns:
-        True if address format is valid, False otherwise.
+        True if ``ip`` is a valid IPv6 literal, False otherwise.
     """
-    return re.match(ValidationRegex.IPV6, ip) is not None
+    if not ip:
+        return False
+    try:
+        ipaddress.IPv6Address(ip.strip())
+        return True
+    except ipaddress.AddressValueError:
+        return False
 
 
 def is_valid_path(path_str: str) -> bool:
-    """Validate that a string is a valid file or directory path.
+    """Return True if ``path_str`` points to an existing filesystem entry.
 
     Args:
-        path_str: The path string to validate.
+        path_str: Path string to check.
 
     Returns:
-        True if the path exists, False otherwise.
+        Boolean existence status.
     """
-    return os.path.exists(path_str)
+    return bool(path_str) and os.path.exists(path_str)
 
 
 def resolve_path(path: str) -> str:
-    """Resolve tilde (~) and relative segments, returning absolute path.
+    """Expand ``~`` and relative segments into an absolute path.
 
     Args:
-        path: Raw path string to resolve.
+        path: Raw user-supplied path string.
 
     Returns:
-        Cleaned absolute canonical path.
+        Normalized absolute path string.
     """
     return os.path.abspath(os.path.expanduser(path.strip()))
 
 
 def is_valid_file_path(path: str, must_exist: bool = False) -> bool:
-    """Validate path format and optional existence.
+    """Validate file path readability or parent directory writability.
 
     Args:
-        path: Path string to validate.
-        must_exist: If True, checks if file exists. If False, checks if
-            the parent directory is writable/exists.
+        path: Raw path string to check.
+        must_exist: Require an existing regular file when True.
 
     Returns:
-        True if path is valid, False otherwise.
+        True when ``path`` satisfies the requested file/directory constraints.
     """
-    if not path:
+    if not path or not path.strip():
         return False
-
     try:
         resolved = resolve_path(path)
-
+        if os.path.islink(resolved):
+            return False
         if must_exist:
-            return os.path.isfile(resolved)
-
+            return os.path.isfile(resolved) and os.access(resolved, os.R_OK)
         if os.path.exists(resolved):
             return os.path.isfile(resolved) and os.access(resolved, os.W_OK)
-
         parent_dir = os.path.dirname(resolved)
         return os.path.isdir(parent_dir) and os.access(parent_dir, os.W_OK)
     except (ValueError, OSError):

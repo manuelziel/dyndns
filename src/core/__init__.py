@@ -1,71 +1,61 @@
 #!/usr/bin/env python3
 """Core module for DynDNS.
 
-This module provides the core functionality including configuration management,
-database operations, logging, encryption, and custom exceptions.
-
-Modules:
-    config: TOML configuration loading and management.
-    database: SQLite database with connection pooling.
-    encryption: Fernet-based encryption for sensitive data.
-    logger: Logging with systemd journal integration.
-    exceptions: Custom exception hierarchy.
-    constants: Application constants and enums.
-
-Typical usage:
-    >>> from src.core import ConfigManager, Database, LoggerManager
-    >>> config = ConfigManager('/app', '/app/config.toml')
-    >>> logger = LoggerManager.get_logger('dyndns')
+Provides configuration management, SQLite connection pooling, Fernet
+encryption, native systemd journald socket logging, URI secret redaction,
+ownership handoff, constants, and custom exceptions in strict bottom-up DAG order.
 
 Author: Manuel Ziel
 License: MIT
 """
 
 ################################################################################
-# PACKAGE IMPORTS
+# PACKAGE IMPORTS (Bottom-Up DAG Order)
 ################################################################################
 
 from .constants import (
-    AppSettings,
-    SyncStatus,
-    UpdateStatus,
-    RecordType,
-    PlaceholderIP,
-    Subdomain,
-    ExportFormat,
-    HTTPMethod,
-    HTTPStatus,
-    HTTPHeader,
-    HTTPHeaderValue,
-    EnvKeys,
-    OwnershipDefaults,
-    StorageConstants,
-    EncryptionDefaults,
     AppPaths,
-    ProviderAPI,
-    NetworkAPI,
-    DNSDefaults,
-    LoggingDefaults,
+    AppSettings,
     DaemonDefaults,
     DatabaseDefaults,
-    UpdateMethod,
+    DNSDefaults,
+    EncryptionDefaults,
+    EnvKeys,
     ExceptionMessages,
+    ExportFormat,
+    HTTPHeader,
+    HTTPHeaderValue,
+    HTTPMethod,
+    HTTPStatus,
+    LoggingDefaults,
+    NetworkAPI,
+    OwnershipDefaults,
+    PlaceholderIP,
+    ProviderAPI,
+    RecordType,
+    SecurityDefaults,
+    StorageConstants,
+    Subdomain,
+    SyncStatus,
+    UpdateMethod,
+    UpdateStatus,
 )
 from .exceptions import (
-    DynDNSException,
+    APIError,
+    ConfigError,
     DatabaseError,
     DatabaseLockedError,
-    ConfigError,
+    DynDNSException,
     EncryptionError,
     NetworkError,
-    APIError,
     RecordNotFoundError,
-    ZoneNotFoundError,
     ValidationError,
+    ZoneNotFoundError,
 )
-from .logger import LoggerManager
+from .security import sanitize_log_uri
 from .ownership import ensure_service_ownership
 from .encryption import EncryptionManager
+from .logger import LoggerManager
 from .database import Database
 from .config import ConfigManager
 
@@ -75,46 +65,48 @@ from .config import ConfigManager
 
 __all__ = [
     # Constants
-    'AppSettings',
-    'SyncStatus',
-    'UpdateStatus',
-    'RecordType',
-    'PlaceholderIP',
-    'Subdomain',
-    'ExportFormat',
-    'HTTPMethod',
-    'HTTPStatus',
-    'HTTPHeader',
-    'HTTPHeaderValue',
-    'EnvKeys',
-    'OwnershipDefaults',
-    'StorageConstants',
-    'EncryptionDefaults',
-    'AppPaths',
-    'ProviderAPI',
-    'NetworkAPI',
-    'DNSDefaults',
-    'LoggingDefaults',
-    'DaemonDefaults',
-    'DatabaseDefaults',
-    'UpdateMethod',
-    'ExceptionMessages',
+    "AppPaths",
+    "AppSettings",
+    "DaemonDefaults",
+    "DatabaseDefaults",
+    "DNSDefaults",
+    "EncryptionDefaults",
+    "EnvKeys",
+    "ExceptionMessages",
+    "ExportFormat",
+    "HTTPHeader",
+    "HTTPHeaderValue",
+    "HTTPMethod",
+    "HTTPStatus",
+    "LoggingDefaults",
+    "NetworkAPI",
+    "OwnershipDefaults",
+    "PlaceholderIP",
+    "ProviderAPI",
+    "RecordType",
+    "SecurityDefaults",
+    "StorageConstants",
+    "Subdomain",
+    "SyncStatus",
+    "UpdateMethod",
+    "UpdateStatus",
     # Exceptions
-    'DynDNSException',
-    'DatabaseError',
-    'DatabaseLockedError',
-    'ConfigError',
-    'EncryptionError',
-    'NetworkError',
-    'APIError',
-    'RecordNotFoundError',
-    'ZoneNotFoundError',
-    'ValidationError',
+    "APIError",
+    "ConfigError",
+    "DatabaseError",
+    "DatabaseLockedError",
+    "DynDNSException",
+    "EncryptionError",
+    "NetworkError",
+    "RecordNotFoundError",
+    "ValidationError",
+    "ZoneNotFoundError",
     # Helpers
-    'ensure_service_ownership',
+    "ensure_service_ownership",
+    "sanitize_log_uri",
     # Core Classes
-    'LoggerManager',
-    'EncryptionManager',
-    'Database',
-    'ConfigManager',
+    "ConfigManager",
+    "Database",
+    "EncryptionManager",
+    "LoggerManager",
 ]

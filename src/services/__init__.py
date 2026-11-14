@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Services package for the DynDNS application.
 
-Provides business logic services (Domain-Driven Design), including
-SyncService for API provider reconciliation and UpdateService for IP syncing.
+Provides domain services including ``SyncService`` for provider reconciliation
+and ``UpdateService`` for IP propagation.
 
 Author: Manuel Ziel
 License: MIT
@@ -20,6 +20,6 @@ from .update_service import UpdateService
 ################################################################################
 
 __all__ = [
-    'SyncService',
-    'UpdateService',
+    "SyncService",
+    "UpdateService",
 ]

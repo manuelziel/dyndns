@@ -1,10 +1,12 @@
 #!/bin/bash
-# lib/modules/python.sh
+# lib/modules/python.sh - Python virtual environment and runtime execution helpers
 #
 # DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
+
+set -euo pipefail
 
 ################################################################################
 # VIRTUAL ENVIRONMENT MANAGEMENT
@@ -14,50 +16,74 @@ setup_virtual_environment() {
     local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
 
     print_info "Setting up virtual environment..."
+    if [[ -L "${venv_dir}" ]]; then
+        print_error "Refusing symlinked virtual environment path: ${venv_dir}"
+        return 1
+    fi
 
-    if [[ -d "${venv_dir}" ]]; then
-        print_info "Virtual environment already exists"
+    if [[ -x "${venv_dir}/bin/python3" ]]; then
+        print_info "Virtual environment already exists at ${venv_dir}"
         return 0
     fi
 
-    print_info "Creating virtual environment..."
+    print_info "Creating virtual environment at ${venv_dir}..."
     if python3 -m venv --copies "${venv_dir}"; then
         print_success "Virtual environment created at ${venv_dir}"
         return 0
-    else
-        print_error "Failed to create virtual environment"
-        return 1
     fi
+
+    print_error "Failed to create virtual environment at ${venv_dir}"
+    return 1
 }
 
 activate_virtual_environment() {
     local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
+    local cmd_name="${SOFTWARE_DIR_NAME:-"[SOFTWARE_DIR_NAME]"}"
 
-    print_info "Activating virtual environment..."
-
-    if [[ -d "${venv_dir}" ]]; then
-        if source "${venv_dir}/bin/activate"; then
-            print_success "Virtual environment activated"
-            return 0
-        else
-            print_error "Failed to activate virtual environment"
-            return 1
-        fi
-    else
-        print_warning "Virtual environment not found, creating new one..."
-        if setup_virtual_environment; then
-            if source "${venv_dir}/bin/activate"; then
-                print_success "Virtual environment activated"
-                return 0
-            else
-                print_error "Failed to activate virtual environment"
-                return 1
-            fi
-        else
-            print_error "Failed to create virtual environment"
-            return 1
-        fi
+    if [[ -L "${venv_dir}" || -L "${venv_dir}/bin/activate" ]]; then
+        print_error "Refusing symlinked virtual environment path: ${venv_dir}"
+        return 1
     fi
+
+    if [[ ! -x "${venv_dir}/bin/python3" || ! -f "${venv_dir}/bin/activate" ]]; then
+        print_error "Python virtual environment not found at ${venv_dir}"
+        print_info "Initialize it first with: sudo ${cmd_name} setup-env"
+        return 1
+    fi
+
+    if source "${venv_dir}/bin/activate"; then
+        return 0
+    fi
+
+    print_error "Failed to activate virtual environment at ${venv_dir}"
+    return 1
+}
+
+sync_venv_ownership() {
+    local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
+    local service_user="${SERVICE_USER:-root}"
+    local target_group="${service_user}"
+
+    if [[ "${EUID}" -ne 0 || -L "${venv_dir}" || ! -d "${venv_dir}" ]]; then
+        return 0
+    fi
+
+    find -P "${venv_dir}" -not -type l -type d -exec chmod 00755 {} + 2>/dev/null || true
+    find -P "${venv_dir}" -not -type l -type f -perm /111 -exec chmod 0755 {} + 2>/dev/null || true
+    find -P "${venv_dir}" -not -type l -type f ! -perm /111 -exec chmod 0644 {} + 2>/dev/null || true
+
+    if [[ -z "${service_user}" || "${service_user}" == "[SERVICE_USER]" || "${service_user}" == "root" ]]; then
+        return 0
+    fi
+    if ! getent passwd "${service_user}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! getent group "${target_group}" >/dev/null 2>&1; then
+        target_group="$(id -gn "${service_user}" 2>/dev/null || echo "${service_user}")"
+    fi
+
+    chown -hRP "${service_user}:${target_group}" "${venv_dir}" 2>/dev/null || true
+    return 0
 }
 
 ################################################################################
@@ -65,29 +91,34 @@ activate_virtual_environment() {
 ################################################################################
 
 install_python_dependencies() {
+    local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
+    local venv_python="${venv_dir}/bin/python3"
     local requirements_file="${REQUIREMENTS_FILE:-"[REQUIREMENTS_FILE]"}"
 
-    print_info "Installing Python dependencies..."
+    if [[ ! -x "${venv_python}" ]]; then
+        print_error "Virtual environment Python binary not found: ${venv_python}"
+        return 1
+    fi
 
-    if [[ -f "${requirements_file}" ]]; then
-        # Fast offline check - verify all packages are already installed
-        if pip install --no-index --no-deps -r "${requirements_file}" -q 2>/dev/null; then
-            print_success "All required packages installed"
-            return 0
-        fi
-
-        # Packages missing - need network install
-        if pip install --upgrade -r "${requirements_file}" -q; then
-            print_success "All required packages installed"
-            return 0
-        else
-            print_error "Failed to install Python packages"
-            return 1
-        fi
-    else
+    if [[ ! -f "${requirements_file}" ]]; then
         print_warning "requirements.txt not found, skipping package installation"
         return 0
     fi
+
+    print_info "Installing Python dependencies..."
+
+    if "${venv_python}" -m pip install --disable-pip-version-check --no-index -r "${requirements_file}" -q 2>/dev/null; then
+        print_success "All required packages installed"
+        return 0
+    fi
+
+    if "${venv_python}" -m pip install --disable-pip-version-check --upgrade -r "${requirements_file}" -q; then
+        print_success "All required packages installed"
+        return 0
+    fi
+
+    print_error "Failed to install Python packages"
+    return 1
 }
 
 ################################################################################
@@ -95,181 +126,190 @@ install_python_dependencies() {
 ################################################################################
 
 export_python_environment() {
-    local python_src_dir
+    local python_src_dir=""
     local share_dir="${SHARE_DIR:-"[SHARE_DIR]"}"
     local debug="${DEBUG_MODE:-${DEBUG:-0}}"
     local verbose="${VERBOSE:-0}"
+    local daemon_mode="${DAEMON_MODE:-0}"
 
-
-    print_info "Exporting Python environment variables..."
-
-    # Use installed Python modules
     if [[ -n "${share_dir}" && "${share_dir}" != "[SHARE_DIR]" && -d "${share_dir}/src" ]]; then
         python_src_dir="${share_dir}/src"
-        print_info "Using Python modules: ${python_src_dir}"
-    else
-        python_src_dir=""
-        print_warning "Python src directory not found, Python script will auto-detect"
+    elif [[ -n "${_DIR:-}" && -d "${_DIR}/src" ]]; then
+        python_src_dir="${_DIR}/src"
     fi
-
-    # Export Python-related environment variables
-    # Note: PID_FILE, CONFIG_FILE, DATA_DIR, RUNTIME_DIR, VENV_DIR already exported in config.sh
     if [[ -n "${python_src_dir}" ]]; then
         export PYTHON_SRC_DIR="${python_src_dir}"
+        print_debug "Using Python modules: ${python_src_dir}"
     fi
-
-    if [[ "${debug:-0}" -eq 1 ]]; then
-        export DEBUG=1
-    fi
-    if [[ "${verbose:-0}" -eq 1 ]]; then
-        export VERBOSE=1
-    fi
-
-    # Export daemon mode for Python logger (suppress console handler in daemon mode)
-    local daemon_mode="${DAEMON_MODE:-0}"
+    [[ "${debug}" -eq 1 ]] && export DEBUG=1
+    [[ "${verbose}" -eq 1 ]] && export VERBOSE=1
     export DAEMON_MODE="${daemon_mode}"
-
-    # Export service user/group so the Python ownership helper can hand
-    # off files created by root-invoked admin CLI actions (config, import,
-    # export) to the unprivileged service user.
-    if [[ -n "${SERVICE_USER:-}" ]]; then
-        export SERVICE_USER
-    fi
-    if [[ -n "${SERVICE_GROUP:-}" ]]; then
-        export SERVICE_GROUP
-    fi
-
-    print_success "Python environment variables exported"
+    [[ -n "${SERVICE_USER:-}" ]] && export SERVICE_USER
+    [[ -n "${SERVICE_GROUP:-}" ]] && export SERVICE_GROUP
+    return 0
 }
 
 ################################################################################
 # APPLICATION MANAGEMENT
 ################################################################################
 
-start_python_application() {
-    local enable_python="${ENABLE_PYTHON:-0}"
-    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
-    local daemon_mode="${DAEMON_MODE:-0}"
-    local init_delay=3
+_write_python_pid_file() {
+    local python_pid="$1"
+    local pid_file="${PID_FILE:-"[PID_FILE]"}"
+    local pid_dir
 
-    if [[ "${enable_python}" -ne 1 ]]; then
-        print_error "Python support is not enabled (ENABLE_PYTHON=${enable_python})"
-        return 1
+    if [[ -z "${pid_file}" || "${pid_file}" == "[PID_FILE]" ]]; then
+        return 0
     fi
 
-    if ! setup_python_environment; then
-        print_error "Failed to setup Python environment"
-        return 1
+    pid_dir="$(dirname "${pid_file}")"
+    if [[ ! -d "${pid_dir}" ]]; then
+        mkdir -p "${pid_dir}" 2>/dev/null || true
     fi
 
-    export_python_environment
-
-    if [[ ! -f "${python_script}" ]]; then
-        print_error "Python script not found: ${python_script}"
-        return 1
+    if [[ ! -d "${pid_dir}" || ! -w "${pid_dir}" ]]; then
+        print_warning "Cannot write PID file to ${pid_file}"
+        return 0
     fi
 
-    print_info "Executing: ${python_script} $*"
-
-    # Check if running in daemon mode or single-run mode
-    if [[ "${daemon_mode}" -eq 1 ]]; then
-        # Note: Output still goes to terminal for interactive debugging
-        # For production daemon, redirect to log: >> "${LOG_FILE}" 2>&1
-        python3 "${python_script}" "$@" &
-        local python_pid=$!
-
-        # Save PID to file with safety checks
-        local pid_file="${PID_FILE:-"[PID_FILE]"}"
-        if [[ -n "${pid_file}" ]]; then
-            local pid_dir="$(dirname "${pid_file}")"
-            # Try to create the runtime directory if missing (for manual runs;
-            # systemd creates it via RuntimeDirectory= for service starts).
-            if [[ ! -d "${pid_dir}" ]]; then
-                mkdir -p "${pid_dir}" 2>/dev/null || true
-            fi
-            # Ensure PID directory exists and is writable
-            if [[ ! -d "${pid_dir}" ]] || [[ ! -w "${pid_dir}" ]]; then
-                print_warning "Cannot write PID file to ${pid_file}"
-            else
-                if echo "${python_pid}" > "${pid_file}" 2>/dev/null; then
-                    print_success "Process started with PID: ${python_pid}"
-                else
-                    print_warning "Process started (PID: ${python_pid}) couldn't write PID file"
-                fi
-            fi
-        fi
-
-        # Give process time to initialize
-        sleep "${init_delay}"
-
-        if kill -0 "${python_pid}" 2>/dev/null; then
-            # print_success "Application started successfully"
-            return 0
-        else
-            print_error "Application failed to start"
-            rm -f "${pid_file}"
-            return 1
-        fi
+    if printf '%s\n' "${python_pid}" > "${pid_file}" 2>/dev/null; then
+        print_success "Process started with PID: ${python_pid}"
     else
-        # Single-run mode: Run in foreground (blocking)
-        python3 "${python_script}" "$@"
-        local exit_code=$?
-        
-        if [[ "${exit_code}" -eq 0 ]]; then
-            print_success "Application completed successfully"
-        else
-            print_error "Application failed with exit code: ${exit_code}"
-        fi
-        
-        return "${exit_code}"
+        print_warning "Process started (PID: ${python_pid}) couldn't write PID file"
     fi
 }
 
-# Usage: start_python_cli "config"
-#        start_python_cli "import" "config.yaml"
-#        start_python_cli "export" "--output" "backup.yaml"
-start_python_cli() {
-    local enable_python="${ENABLE_PYTHON:-0}"
-    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
-    local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
-    local python_bin="python3"
-    local cli_command="$1"
-    local exit_code
+_acquire_daemon_lock() {
+    local lock_file="${LOCK_FILE:-"[LOCK_FILE]"}"
+    local lock_dir
 
-    shift  # Remove first argument, rest are CLI args
+    if [[ -z "${lock_file}" || "${lock_file}" == "[LOCK_FILE]" ]]; then
+        return 0
+    fi
+    if ! command -v flock >/dev/null 2>&1; then
+        return 0
+    fi
+
+    lock_dir="$(dirname "${lock_file}")"
+    if [[ ! -d "${lock_dir}" ]]; then
+        mkdir -p "${lock_dir}" 2>/dev/null || true
+    fi
+    if [[ ! -d "${lock_dir}" || ! -w "${lock_dir}" ]]; then
+        return 0
+    fi
+
+    exec 9>"${lock_file}" 2>/dev/null || return 0
+    if ! flock -n 9; then
+        exec 9>&- 2>/dev/null || true
+        print_warning "Another instance is already holding lock: ${lock_file}"
+        return 1
+    fi
+    return 0
+}
+
+_release_daemon_lock_fd() {
+    exec 9>&- 2>/dev/null || true
+}
+
+_launch_python_daemon() {
+    local python_bin="$1"
+    local python_script="$2"
+    local pid_file="${PID_FILE:-"[PID_FILE]"}"
+    local init_delay="${DAEMON_INIT_DELAY:-3}"
+    local python_pid
+
+    shift 2
+    if ! _acquire_daemon_lock; then
+        return 1
+    fi
+
+    "${python_bin}" "${python_script}" "$@" &
+    python_pid=$!
+    _release_daemon_lock_fd
+
+    _write_python_pid_file "${python_pid}"
+    sleep "${init_delay}"
+
+    if kill -0 "${python_pid}" 2>/dev/null; then
+        return 0
+    fi
+
+    print_error "Application failed to start"
+    rm -f "${pid_file}"
+    return 1
+}
+
+_run_python_foreground() {
+    local python_bin="$1"
+    local python_script="$2"
+    local exit_code=0
+    shift 2
+
+    _acquire_daemon_lock || return 1
+    "${python_bin}" "${python_script}" "$@" || exit_code=$?
+    _release_daemon_lock_fd
+    if [[ "${exit_code}" -eq 0 ]]; then
+        print_success "Application completed successfully"
+    else
+        print_error "Application failed with exit code: ${exit_code}"
+    fi
+    return "${exit_code}"
+}
+
+start_python_application() {
+    local enable_python="${ENABLE_PYTHON:-0}"
+    local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
+    local python_bin="${venv_dir}/bin/python3"
+    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
+    local daemon_mode="${DAEMON_MODE:-0}"
+    local exit_code=0
 
     if [[ "${enable_python}" -ne 1 ]]; then
         print_error "Python support is not enabled (ENABLE_PYTHON=${enable_python})"
         return 1
     fi
-
-    if ! setup_python_environment; then
-        print_error "Failed to setup Python environment"
+    if ! activate_virtual_environment || [[ ! -f "${python_script}" ]]; then
+        [[ -f "${python_script}" ]] || print_error "Python script not found: ${python_script}"
         return 1
     fi
 
     export_python_environment
+    print_info "Executing: ${python_script} $*"
+    if [[ "${daemon_mode}" -eq 1 ]]; then
+        _launch_python_daemon "${python_bin}" "${python_script}" "$@" || exit_code=$?
+    else
+        _run_python_foreground "${python_bin}" "${python_script}" "$@" || exit_code=$?
+    fi
+    return "${exit_code}"
+}
 
+start_python_cli() {
+    local enable_python="${ENABLE_PYTHON:-0}"
+    local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
+    local python_bin="${venv_dir}/bin/python3"
+    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
+    local cli_command="$1"
+    local exit_code=0
+
+    shift
+
+    if [[ "${enable_python}" -ne 1 ]]; then
+        print_error "Python support is not enabled (ENABLE_PYTHON=${enable_python})"
+        return 1
+    fi
+    if ! activate_virtual_environment; then
+        return 1
+    fi
     if [[ ! -f "${python_script}" ]]; then
         print_error "Python script not found: ${python_script}"
         return 1
     fi
 
-    # Prefer the venv interpreter when available. Admin CLI actions
-    # (config/import/export) run as the caller (typically root via sudo);
-    # the Python ownership helper hands off created files to SERVICE_USER
-    # so the systemd service retains access.
-    if [[ -x "${venv_dir}/bin/python3" ]]; then
-        python_bin="${venv_dir}/bin/python3"
-    fi
-
-    "${python_bin}" "${python_script}" "${cli_command}" "$@"
-    exit_code=$?
-
+    export_python_environment
+    "${python_bin}" "${python_script}" "${cli_command}" "$@" || exit_code=$?
     if [[ "${exit_code}" -ne 0 ]]; then
         print_error "CLI command failed with exit code: ${exit_code}"
     fi
-
     return "${exit_code}"
 }
 
@@ -290,29 +330,22 @@ setup_python_environment() {
         return 1
     fi
 
+    sync_venv_ownership
     return 0
 }
 
 rebuild_python_environment() {
     local venv_dir="${VENV_DIR:-"[VENV_DIR]"}"
-    local service_user="${SERVICE_USER:-root}"
-    local service_group="${SERVICE_GROUP:-${service_user}}"
 
     print_info "Rebuilding Python virtual environment..."
 
-    if [[ -n "${venv_dir}" && "${venv_dir}" != "[VENV_DIR]" && "${venv_dir}" != "/" && -d "${venv_dir}" ]]; then
+    if [[ -d "${venv_dir}" || -L "${venv_dir}" ]]; then
         print_info "Removing existing virtual environment at ${venv_dir}..."
-        rm -rf "${venv_dir}"
+        safe_rm_rf "${venv_dir}" || return 1
     fi
 
     if ! setup_python_environment; then
         return 1
-    fi
-
-    if [[ "${EUID}" -eq 0 && -n "${service_user}" && "${service_user}" != "root" && -d "${venv_dir}" ]]; then
-        if getent passwd "${service_user}" >/dev/null 2>&1; then
-            chown -R "${service_user}:${service_group}" "${venv_dir}" 2>/dev/null || true
-        fi
     fi
 
     print_success "Python virtual environment rebuilt successfully"

@@ -1,41 +1,35 @@
 #!/bin/bash
-# lib/runtime/application.sh
+# lib/runtime/application.sh - Application lifecycle control and configuration
 #
 # DynDNS
 #
 # Author: Manuel Ziel
 # License: MIT
 
+set -euo pipefail
+
 ################################################################################
 # CORE APPLICATION LOGIC
 ################################################################################
 
 do_main_work() {
-    start_python_application "$@"
+    local exit_code=0
 
-    return $?
+    start_python_application "$@" || exit_code=$?
+    return "${exit_code}"
 }
 
 # Return 0 if start/stop/restart should be delegated to systemctl.
-# True when a systemd unit is installed AND SERVICE_USER differs from the
-# current user. Running the daemon directly as root in that case would
-# create data files with the wrong ownership and break the next
-# systemd-managed start with "readonly database" or similar errors.
+# Delegates whenever the systemd unit is installed and we are NOT already
+# executing inside a systemd unit invocation (INVOCATION_ID / SYSTEMD_EXEC_PID).
 should_delegate_to_systemctl() {
-    local service_user="${SERVICE_USER:-root}"
-    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
-
+    if [[ -n "${INVOCATION_ID:-}" || -n "${SYSTEMD_EXEC_PID:-}" ]]; then
+        return 1
+    fi
     if ! command -v systemctl >/dev/null 2>&1; then
         return 1
     fi
-    if ! systemctl list-unit-files --no-legend "${service_name}" 2>/dev/null \
-            | grep -q "^${service_name}"; then
-        return 1
-    fi
-    if [[ -z "${service_user}" || "${service_user}" == "$(id -un)" ]]; then
-        return 1
-    fi
-    return 0
+    service_exists
 }
 
 ################################################################################
@@ -45,122 +39,171 @@ should_delegate_to_systemctl() {
 send_signal() {
     local pid="$1"
     local signal="$2"
-    
-    if ! kill -0 "${pid}" 2>/dev/null; then
-        if sudo kill -0 "${pid}" 2>/dev/null; then
-            sudo kill -"${signal}" "${pid}" 2>/dev/null
-            return $?
-        fi
-        return 1
+    local exit_code=0
+
+    if kill -0 "${pid}" 2>/dev/null; then
+        kill -"${signal}" "${pid}" 2>/dev/null || exit_code=$?
+        return "${exit_code}"
     fi
-    
-    kill -"${signal}" "${pid}" 2>/dev/null
-    return $?
+
+    return 1
+}
+
+_resolve_stop_target_pids() {
+    local pid_file="${PID_FILE:-"[PID_FILE]"}"
+    local pid=""
+
+    if [[ -f "${pid_file}" ]]; then
+        pid="$(tr -d '[:space:]' < "${pid_file}" 2>/dev/null || true)"
+        if _is_daemon_pid "${pid}"; then
+            echo "${pid}"
+            return 0
+        fi
+    fi
+
+    _find_fallback_daemon_pids
+}
+
+_filter_alive_daemon_pids() {
+    local pid_list="$1"
+    local pid
+
+    for pid in ${pid_list}; do
+        if _is_daemon_pid "${pid}"; then
+            echo "${pid}"
+        fi
+    done
+}
+
+_terminate_daemon_pids() {
+    local target_pids="$1"
+    local max_wait="${DAEMON_STOP_MAX_WAIT:-10}"
+    local poll_interval="${DAEMON_STOP_POLL_INTERVAL:-1}"
+    local count=0 remaining_pids="" pid
+
+    print_info "Sending termination signal to processes..."
+    for pid in ${target_pids}; do
+        send_signal "${pid}" "TERM" || true
+    done
+
+    print_info "Waiting to terminate the processes..."
+    while [[ "${count}" -lt "${max_wait}" ]]; do
+        remaining_pids="$(_filter_alive_daemon_pids "${target_pids}")"
+        [[ -z "${remaining_pids}" ]] && return 0
+        sleep "${poll_interval}"
+        count=$((count + 1))
+    done
+
+    print_warning "Processes did not terminate, forcing shutdown..."
+    for pid in ${remaining_pids}; do
+        send_signal "${pid}" "KILL" || true
+    done
+    sleep "${poll_interval}"
+    remaining_pids="$(_filter_alive_daemon_pids "${target_pids}")"
+    [[ -z "${remaining_pids}" ]]
 }
 
 start_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
+    local exit_code=0
 
     print_info "Starting ${software_name}..."
+
+    if should_delegate_to_systemctl; then
+        print_info "Delegating to systemd: systemctl start ${service_name}"
+        service_start || exit_code=$?
+        return "${exit_code}"
+    fi
 
     if is_running; then
         print_warning "${software_name} is already running"
         return 0
     fi
 
-    # Delegate to systemd so the daemon runs under the configured SERVICE_USER
-    # instead of the invoking root shell (prevents root-owned data files).
+    do_main_work "$@" || exit_code=$?
+    return "${exit_code}"
+}
+
+start_daemon() {
+    local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
+    local exit_code=0
+
+    print_info "Starting ${software_name} in daemon mode..."
+
     if should_delegate_to_systemctl; then
         print_info "Delegating to systemd: systemctl start ${service_name}"
-        service_start
-        return $?
+        service_start || exit_code=$?
+        return "${exit_code}"
     fi
 
-    do_main_work "$@"
+    if is_running; then
+        print_warning "${software_name} is already running"
+        return 0
+    fi
+
+    do_main_work "$@" || exit_code=$?
+    return "${exit_code}"
+}
+
+_log_stop_targets() {
+    local target_pids="$1"
+    local pid_count pid_list
+    pid_count="$(printf '%s\n' "${target_pids}" | wc -l)"
+    pid_list="$(printf '%s\n' "${target_pids}" | tr '\n' ',' | sed 's/,/, /g; s/, $//')"
+    print_info "Found ${pid_count} process(es): ${pid_list}"
 }
 
 stop_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
-    local python_script="${PYTHON_SCRIPT:-"[PYTHON_SCRIPT]"}"
-    local count=0
-    local max_wait=10
+    local exit_code=0 target_pids=""
 
     print_info "Stopping ${software_name}..."
-
-    # Prefer systemd when it owns the lifecycle; direct kill would leave
-    # the unit in a failed state and trigger auto-restart.
     if should_delegate_to_systemctl; then
         print_info "Delegating to systemd: systemctl stop ${service_name}"
-        service_stop
-        return $?
+        service_stop || exit_code=$?
+        return "${exit_code}"
     fi
-
-    local all_pids=$(pgrep -f "^python3 .*${python_script}" || true)
-    local remaining_pids
-    local pid_list=""
-    
-    # Format PIDs as comma-separated list for better readability
-    if [[ -n "${all_pids}" ]]; then
-        local pid_count=$(echo "${all_pids}" | wc -l)
-        pid_list=$(echo "${all_pids}" | tr '\n' ',' | sed 's/,/, /g' | sed 's/, $//')
-        print_info "Found ${pid_count} process(es): ${pid_list}"
-    else
+    target_pids="$(_resolve_stop_target_pids)"
+    if [[ -z "${target_pids}" ]]; then
         remove_pid_file
         print_info "${software_name} is not running"
         return 0
     fi
-
-    print_info "Sending termination signal to processes..."
-    for pid in ${all_pids}; do
-        send_signal "${pid}" "TERM"
-    done
-
-    print_info "Waiting to terminate the processes..."
-    while [[ "${count}" -lt "${max_wait}" ]]; do
-        remaining_pids=$(pgrep -f "^python3 .*${python_script}" || true)
-        if [[ -z "${remaining_pids}" ]]; then
-            break
-        fi
-        sleep 1
-        count=$((count + 1))
-    done
-
-    # Force kill any remaining processes
-    remaining_pids=$(pgrep -f "^python3 .*${python_script}" || true)
-    if [[ -n "${remaining_pids}" ]]; then
-        print_warning "Processes did not terminate, forcing shutdown..."
-        for pid in ${remaining_pids}; do
-            send_signal "${pid}" "KILL"
-        done
-        sleep 1
-    fi
-
-    print_info "Cleaning up..."
-    remove_pid_file
-    remaining_pids=$(pgrep -f "^python3 .*${python_script}" || true)
-
-    if [[ -z "${remaining_pids}" ]]; then
+    _log_stop_targets "${target_pids}"
+    if _terminate_daemon_pids "${target_pids}"; then
+        remove_pid_file
         print_success "${software_name} stopped"
-    else
-        print_error "Failed to stop some processes"
-        return 1
+        return 0
     fi
+    print_error "Failed to stop some processes"
+    return 1
 }
 
 restart_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
-    local restart_delay=2
+    local service_name="${SERVICE_NAME:-"[SERVICE_NAME]"}"
+    local restart_delay="${DAEMON_RESTART_DELAY:-2}"
+    local exit_code=0
 
     print_info "Restarting ${software_name}..."
 
-    # stop_application and start_application already delegate to systemctl
-    # when appropriate; no need to duplicate the branch here.
-    stop_application
+    if should_delegate_to_systemctl; then
+        print_info "Delegating to systemd: systemctl restart ${service_name}"
+        service_restart || exit_code=$?
+        return "${exit_code}"
+    fi
+
+    stop_application || exit_code=$?
+    if [[ "${exit_code}" -ne 0 ]]; then
+        return "${exit_code}"
+    fi
     sleep "${restart_delay}"
 
-    start_application "$@"
+    start_application "$@" || exit_code=$?
+    return "${exit_code}"
 }
 
 ################################################################################
@@ -170,6 +213,7 @@ restart_application() {
 configure_application() {
     local software_name="${SOFTWARE_NAME:-"[SOFTWARE_NAME]"}"
     local config_file="${CONFIG_FILE:-"[CONFIG_FILE]"}"
+    local exit_code=0
 
     print_section "Configuring ${software_name}"
 
@@ -188,11 +232,11 @@ configure_application() {
     print_info "Starting interactive configuration menu..."
 
     if [[ "${ENABLE_PYTHON:-0}" -eq 1 ]]; then
-        start_python_cli "config"
+        start_python_cli "config" "$@" || exit_code=$?
     else
         print_warning "Python support not enabled"
         print_info "Edit configuration files manually"
     fi
 
-    return $?
+    return "${exit_code}"
 }

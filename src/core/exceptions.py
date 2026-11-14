@@ -4,25 +4,6 @@
 Provides a structured exception hierarchy for consistent error handling
 across the application. All custom exceptions inherit from DynDNSException.
 
-Exception Hierarchy:
-    DynDNSException (Base)
-    ├── DatabaseError: Database operations (sqlite3 errors)
-    │   └── DatabaseLockedError: SQLite lock contention timeout
-    ├── ConfigError: Configuration issues (TOML parsing, missing keys)
-    ├── EncryptionError: Encryption/Decryption failures
-    ├── NetworkError: Network connectivity issues (IP detection)
-    ├── APIError: Provider API communication
-    │   ├── RecordNotFoundError: DNS record not found (404)
-    │   └── ZoneNotFoundError: DNS zone not found (404)
-    └── ValidationError: Input validation failures
-
-Typical usage:
-    >>> from src.core.exceptions import ConfigError, DatabaseError
-    >>> try:
-    ...     config = load_config('missing.toml')
-    ... except ConfigError as e:
-    ...     logger.error(f'Config error: {e}')
-
 Author: Manuel Ziel
 License: MIT
 """
@@ -37,12 +18,9 @@ from .constants import ExceptionMessages
 # EXCEPTION HIERARCHY
 ################################################################################
 
-class DynDNSException(Exception):
-    """Base exception for all DynDNS errors.
 
-    All custom exceptions inherit from this class to enable catching
-    all application-specific errors with a single except clause.
-    """
+class DynDNSException(Exception):
+    """Base exception for all DynDNS errors."""
 
     def __init__(self, message: str = ExceptionMessages.DEFAULT) -> None:
         """Initialize base exception with default or custom message.
@@ -55,10 +33,7 @@ class DynDNSException(Exception):
 
 
 class DatabaseError(DynDNSException):
-    """Raised when a database operation fails.
-
-    Covers SQLite errors, connection issues, and query failures.
-    """
+    """Raised when a database operation fails."""
 
     def __init__(self, message: str = ExceptionMessages.DATABASE) -> None:
         """Initialize database exception with default or custom message.
@@ -82,10 +57,7 @@ class DatabaseLockedError(DatabaseError):
 
 
 class ConfigError(DynDNSException):
-    """Raised when configuration loading or parsing fails.
-
-    Covers TOML parsing errors, missing required keys, and invalid values.
-    """
+    """Raised when configuration loading or parsing fails."""
 
     def __init__(self, message: str = ExceptionMessages.CONFIG) -> None:
         """Initialize configuration exception with default or custom message.
@@ -109,10 +81,7 @@ class EncryptionError(DynDNSException):
 
 
 class NetworkError(DynDNSException):
-    """Raised when a network operation fails.
-
-    Covers IP detection issues, connectivity problems, and timeouts.
-    """
+    """Raised when a network operation fails."""
 
     def __init__(self, message: str = ExceptionMessages.NETWORK) -> None:
         """Initialize network exception with default or custom message.
@@ -160,10 +129,7 @@ class ZoneNotFoundError(APIError):
 
 
 class ValidationError(DynDNSException):
-    """Raised when input validation fails.
-
-    Covers invalid domains, IP addresses, zone IDs, and constraint violations.
-    """
+    """Raised when input validation fails."""
 
     def __init__(self, message: str = ExceptionMessages.VALIDATION) -> None:
         """Initialize validation exception with default or custom message.

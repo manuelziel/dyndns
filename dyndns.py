@@ -1,209 +1,239 @@
 #!/usr/bin/env python3
 """DynDNS - Main entry point for Dynamic DNS Client.
 
-This is the main entry point for the DynDNS application. It handles
-argument parsing, configuration loading, and dispatches to appropriate
-command handlers or starts the daemon.
+Handles command-line argument parsing, stateless TOML configuration validation,
+interactive CLI dispatch, import/export operations, single-run execution, and
+continuous systemd daemon startup.
 
 Typical usage:
-    $ ./dyndns.py                    # Single update run
-    $ ./dyndns.py config             # Open configuration menu
-    $ ./dyndns.py import config.yaml # Import configuration
-    $ ./dyndns.py export --format json
-
-Note:
-    Use bash wrapper (dyndns) for daemon mode:
-    $ dyndns start --daemon
+    $ ./dyndns.py                           # Single update run
+    $ ./dyndns.py config                    # Open configuration menu
+    $ ./dyndns.py validate                  # Validate config.toml
+    $ ./dyndns.py import config.yaml        # Import configuration
+    $ ./dyndns.py export --format json      # Export configuration
 
 Author: Manuel Ziel
 License: MIT
 """
 
 ################################################################################
-# IMPORTS
+# IMPORTS & DEPENDENCIES
 ################################################################################
 
-import sys
-import os
 import argparse
 import logging
+import os
 import signal
-from typing import Optional, Any
+import sys
+from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-from src import __version__, __software_name__
-from src.core import ConfigManager, LoggerManager, AppPaths, ExportFormat
-from src.daemon import DaemonManager
+from src import __software_name__, __version__
 from src.application import Application
-from src.cli import ConfigMenu, ConfigImporter, ConfigExporter
+from src.cli import ConfigExporter, ConfigImporter, ConfigMenu, run_validate_cli
 from src.cli.constants import CLICommands
+from src.core import AppPaths, ConfigManager, EnvKeys, ExportFormat, LoggerManager
+from src.daemon import DaemonManager
 
-logger: Optional[logging.Logger] = None
+logger: logging.Logger | None = None
 
 ################################################################################
 # ARGUMENT PARSING
 ################################################################################
 
-def parse_arguments() -> argparse.Namespace:
-    """Parse command-line arguments.
 
-    Supports multiple subcommands:
-        config: Interactive CLI configuration menu.
-        import: Import configuration from YAML/JSON file.
-        export: Export current configuration to file.
-        (no command): Start application (default single run).
+def _register_subcommands(parser: argparse.ArgumentParser) -> None:
+    """Register CLI subcommands on ``parser``.
+
+    Args:
+        parser: Root ``ArgumentParser`` instance.
+    """
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    subparsers.add_parser(
+        CLICommands.CONFIG, help="Open interactive configuration menu"
+    )
+    parser_validate = subparsers.add_parser(
+        CLICommands.VALIDATE, help="Validate TOML configuration syntax and schema"
+    )
+    parser_validate.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        help="Path to TOML configuration file (default: active config.toml)",
+    )
+    _register_transfer_subcommands(subparsers)
+
+
+def _register_transfer_subcommands(subparsers: Any) -> None:
+    """Register ``import`` and ``export`` subcommands on ``subparsers``.
+
+    Args:
+        subparsers: ``argparse`` subparsers action object.
+    """
+    parser_import = subparsers.add_parser(
+        CLICommands.IMPORT, help="Import configuration from YAML/JSON file"
+    )
+    parser_import.add_argument(
+        "file", type=str, help="Path to configuration file (YAML or JSON)"
+    )
+    parser_import.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing configuration (default: merge)",
+    )
+    parser_export = subparsers.add_parser(
+        CLICommands.EXPORT, help="Export current configuration to file"
+    )
+    parser_export.add_argument(
+        "--output", type=str, default=None, help="Output file path (default: stdout)"
+    )
+    parser_export.add_argument(
+        "--format",
+        type=str,
+        choices=[ExportFormat.YAML, ExportFormat.JSON],
+        default=ExportFormat.YAML,
+        help="Output format: yaml or json (default: yaml)",
+    )
+
+
+def parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments and subcommands.
 
     Returns:
         Parsed command-line arguments namespace.
     """
     parser = argparse.ArgumentParser(
-        description='Provider DynDNS - Dynamic DNS Client for DNS Providers',
+        description="DynDNS - Dynamic DNS Client for DNS Providers",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s                          # Start DynDNS (single run)
-  %(prog)s config                   # Interactive configuration
-  %(prog)s import config.yaml       # Import configuration
-  %(prog)s export --output backup.yaml  # Export configuration
-
-Note: Use bash wrapper (dyndns) for daemon mode:
-  dyndns start --daemon       # Continuous monitoring via systemd
-        """
+        epilog=(
+            "Examples:\n"
+            "  %(prog)s                          # Start DynDNS (single run)\n"
+            "  %(prog)s config                   # Interactive configuration\n"
+            "  %(prog)s validate                 # Validate config.toml\n"
+            "  %(prog)s import config.yaml       # Import configuration\n"
+            "  %(prog)s export --output bkp.yaml # Export configuration\n"
+        ),
     )
-    
-    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
-    
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
-    subparsers.add_parser('config', help='Open interactive configuration menu')
-    
-    parser_import = subparsers.add_parser('import', help='Import configuration from YAML/JSON file')
-    parser_import.add_argument('file', type=str, help='Path to configuration file (YAML or JSON)')
-    parser_import.add_argument('--overwrite', action='store_true', help='Overwrite existing configuration (default: merge)')
-    
-    parser_export = subparsers.add_parser('export', help='Export current configuration to file')
-    parser_export.add_argument('--output', type=str, default=None, help='Output file path (default: stdout)')
-    parser_export.add_argument('--format', type=str, choices=[ExportFormat.YAML, ExportFormat.JSON], default=ExportFormat.YAML, help='Output format: yaml or json (default: yaml)')
-    
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+    _register_subcommands(parser)
     return parser.parse_args()
 
 
 ################################################################################
-# CLI COMMAND HANDLERS
+# CLI COMMAND & SIGNAL HANDLERS
 ################################################################################
 
-def handle_cli_command(args: argparse.Namespace, config: ConfigManager, logger: logging.Logger) -> int:
-    """Handle CLI subcommands (config, import, export).
+
+def handle_cli_command(
+    args: argparse.Namespace, config: ConfigManager, app_logger: logging.Logger
+) -> int:
+    """Dispatch stateful CLI subcommands (``config``, ``import``, ``export``).
 
     Args:
         args: Parsed command-line arguments.
-        config: Configuration manager instance.
-        logger: Logger instance.
+        config: Initialized ``ConfigManager`` instance.
+        app_logger: Application logger instance.
 
     Returns:
-        Exit code (0 for success, 1 for error).
+        Process exit code (``0`` on success, ``1`` on failure).
     """
     try:
         if args.command == CLICommands.CONFIG:
-            logger.debug("Starting interactive configuration menu...")
-            ConfigMenu(config, logger).run()
+            app_logger.debug("Starting interactive configuration menu...")
+            ConfigMenu(config, app_logger).run()
             return 0
         if args.command == CLICommands.IMPORT:
-            result = ConfigImporter(config, logger).import_from_file(args.file, overwrite=args.overwrite)
-            if result == 0:
-                logger.info("Configuration imported successfully")
-                return 0
-            logger.error("Configuration import failed")
-            return 1
+            rc = ConfigImporter(config, app_logger).import_from_file(
+                args.file, overwrite=args.overwrite
+            )
+            app_logger.info(
+                "Configuration imported successfully"
+            ) if rc == 0 else app_logger.error("Configuration import failed")
+            return 0 if rc == 0 else 1
         if args.command == CLICommands.EXPORT:
-            result = ConfigExporter(config, logger).export_to_file(output_file=args.output, format_type=args.format)
-            if result == 0:
-                logger.info("Configuration exported successfully")
-                return 0
-            logger.error("Configuration export failed")
-            return 1
-    except Exception as e:
-        logger.error(f"Unexpected error: CLI command '{args.command}' failed: {e}")
+            rc = ConfigExporter(config, app_logger).export_to_file(
+                output_file=args.output, format_type=args.format
+            )
+            app_logger.info(
+                "Configuration exported successfully"
+            ) if rc == 0 else app_logger.error("Configuration export failed")
+            return 0 if rc == 0 else 1
+    except Exception as exc:
+        app_logger.error(f"Unexpected error: CLI command '{args.command}' failed: {exc}")
         return 1
     return 0
 
 
-################################################################################
-# SIGNAL HANDLING
-################################################################################
-
-def shutdown_handler(signum: int, frame: Any) -> None:
-    """Signal handler for graceful shutdown.
-
-    Handles SIGTERM and SIGINT signals for graceful application shutdown.
-    This is a fallback for direct Python execution without daemon mode.
+def shutdown_handler(signum: int, _frame: Any) -> None:
+    """Handle ``SIGTERM`` and ``SIGINT`` during non-daemon single-run execution.
 
     Args:
-        signum: Signal number received.
-        frame: Current stack frame.
-
-    Note:
-        DaemonManager in src/daemon.py handles signals in daemon mode.
+        signum: Received POSIX signal number.
+        _frame: Interrupted stack frame (unused).
     """
-    global logger
-    if logger:
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
-    
-    sys.exit(0)
+    sys.exit(128 + signum)
 
 
 ################################################################################
-# MAIN APPLICATION
+# RUNTIME EXECUTION
 ################################################################################
 
-def _run_service_or_single_cycle(config: ConfigManager, logger: logging.Logger, daemon_mode: bool) -> int:
-    """Run the application in daemon mode or execute a single update cycle.
 
-    Args:
-        config: Configuration manager instance.
-        logger: Logger instance.
-        daemon_mode: True to run continuously as a daemon, False for single cycle.
+def _is_daemon_mode() -> bool:
+    """Return True when ``DAEMON_MODE`` environment variable enables daemon mode.
 
     Returns:
-        Exit code (0 for success, 1 for error).
+        True if running as a background daemon, False otherwise.
     """
-    logger.debug("Initializing application services...")
-    app = Application(config, logger)
+    return os.environ.get(EnvKeys.DAEMON_MODE, "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _run_service_or_single_cycle(
+    config: ConfigManager, app_logger: logging.Logger, daemon_mode: bool
+) -> int:
+    """Start continuous daemon monitoring or execute a single update cycle.
+
+    Args:
+        config: Initialized ``ConfigManager`` instance.
+        app_logger: Application logger instance.
+        daemon_mode: True for daemon loop, False for one-shot cycle.
+
+    Returns:
+        Process exit code (``0`` on success, ``1`` on failure).
+    """
+    app_logger.debug("Initializing application services...")
+    app = Application(config, app_logger)
     if daemon_mode:
-        logger.debug("Setting up daemon manager...")
-        daemon = DaemonManager(app, config, logger)
-        logger.debug("Starting daemon mode (continuous monitoring)...")
+        daemon = DaemonManager(app, config, app_logger)
         daemon.run_forever()
-        logger.debug("DynDNS daemon shutdown complete")
         return 0
 
-    logger.debug("Starting single-run mode...")
+    app_logger.debug("Starting single-run mode...")
     try:
         if app.run_cycle():
-            logger.info("Single update completed successfully")
+            app_logger.info("Single update completed successfully")
             return 0
-        logger.warning("Single update completed with warnings")
+        app_logger.warning("Single update completed with warnings")
         return 1
-    except Exception as e:
-        logger.error(f"Unexpected error: Single update failed: {e}")
+    except Exception as exc:
+        app_logger.error(f"Unexpected error: Single update failed: {exc}")
         return 1
     finally:
         app.cleanup()
 
 
 def main() -> int:
-    """Main application entry point.
-
-    Initializes configuration, logging, and dispatches to command handlers
-    or starts the DynDNS application in single-run or daemon mode.
+    """Initialize logging/configuration and dispatch the requested execution mode.
 
     Returns:
-        Exit code (0 for success, non-zero for errors).
-
-    Note:
-        Daemon mode is controlled by DAEMON_MODE environment variable,
-        which is set by the bash wrapper (dyndns.sh).
+        Process exit code (``0`` for success, non-zero on error).
     """
     global logger
 
@@ -211,12 +241,18 @@ def main() -> int:
     signal.signal(signal.SIGTERM, shutdown_handler)
 
     args = parse_arguments()
-    daemon_mode = os.environ.get('DAEMON_MODE', '0') == '1'
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.environ.get("CONFIG_FILE", os.path.join(current_dir, AppPaths.CONFIG_FILE))
-    logger = LoggerManager.get_logger(__software_name__, level=logging.INFO, daemon_mode=daemon_mode)
-    config = ConfigManager(current_dir, config_path, logger=logger)
+    default_cfg = os.environ.get(
+        EnvKeys.CONFIG_FILE, os.path.join(current_dir, AppPaths.CONFIG_FILE)
+    )
+    if args.command == CLICommands.VALIDATE:
+        return run_validate_cli(args.file or default_cfg)
 
+    daemon_mode = _is_daemon_mode()
+    logger = LoggerManager.get_logger(
+        __software_name__, level=logging.INFO, daemon_mode=daemon_mode
+    )
+    config = ConfigManager(current_dir, default_cfg, logger=logger)
     LoggerManager.set_level(logger, config.log_level)
     LoggerManager.set_console_colors(logger, config.console_colors)
 
@@ -228,9 +264,10 @@ def main() -> int:
                 config.db.close()
 
     run_mode = "daemon" if daemon_mode else "once"
-    logger.info(f"{__software_name__} starting... (mode: {run_mode})")
-    logger.info(f"Version: {__version__}")
-    logger.info(f"Log level: {config.log_level}")
+    logger.info(
+        f"{__software_name__} v{__version__} starting "
+        f"(mode: {run_mode}, log_level: {config.log_level})"
+    )
     return _run_service_or_single_cycle(config, logger, daemon_mode)
 
 
@@ -240,15 +277,16 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        exit_code = main()
-        sys.exit(exit_code)
+        sys.exit(main())
     except KeyboardInterrupt:
-        if logger is None:
-            logger = LoggerManager.get_logger(__software_name__)
-        logger.warning("Application interrupted by user")
+        if logger is not None:
+            logger.warning("Application interrupted by user")
+        else:
+            print("Application interrupted by user", file=sys.stderr)
         sys.exit(130)
-    except Exception as e:
-        if logger is None:
-            logger = LoggerManager.get_logger(__software_name__)
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+    except Exception as exc:
+        if logger is not None:
+            logger.error(f"Unexpected error: {exc}", exc_info=True)
+        else:
+            print(f"Unexpected error: {exc}", file=sys.stderr)
         sys.exit(1)

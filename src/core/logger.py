@@ -1,22 +1,9 @@
 #!/usr/bin/env python3
-"""Advanced logging system with systemd journal integration.
+"""Pure-Python logging factory with ANSI stderr formatting and journald integration.
 
-This module provides a sophisticated logging system that integrates with
-both console output (with ANSI colors) and systemd journal for persistent
-logging in daemon mode.
-
-Features:
-    - Thread-safe logger factory with caching.
-    - ANSI color-coded console output.
-    - Systemd journal integration for daemon mode.
-    - Custom SUCCESS log level.
-    - Bash environment variable integration (DEBUG, VERBOSE).
-
-Typical usage:
-    >>> from src.core.logger import LoggerManager
-    >>> logger = LoggerManager.get_logger('myapp', level='DEBUG')
-    >>> logger.info('Application started')
-    >>> logger.success('Operation completed')  # Custom level
+Provides thread-safe logger management with TTY-aware ANSI console formatting on
+``stderr``, native systemd journald datagram logging via ``src.core.journal``,
+automatic URI secret redaction, and bounded in-memory ring buffers.
 
 Author: Manuel Ziel
 License: MIT
@@ -26,80 +13,65 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
+from collections import deque
 import logging
 import os
 import sys
 import threading
-from typing import Dict, Any
-
-try:
-    from systemd import journal
-except ImportError:
-    journal = None
+from typing import Any
 
 from ..utils.colors import LOG_COLORS, LOG_SYMBOLS
-from .exceptions import ConfigError
 from .constants import AppSettings, LoggingDefaults
+from .exceptions import ConfigError
+from .journal import JournaldSocketHandler, RingBufferHandler
+from .security import sanitize_log_uri
 
-__syslog_identifier__ = os.environ.get('SYSLOG_IDENTIFIER') or AppSettings.SYSLOG_IDENTIFIER
-
+__syslog_identifier__ = (
+    os.environ.get("SYSLOG_IDENTIFIER") or AppSettings.SYSLOG_IDENTIFIER
+)
 
 ################################################################################
-# FORMATTER CLASSES - ANSI Color Formatting
+# FORMATTER CLASSES - Plain & ANSI Color Formatting
 ################################################################################
+
 
 class PlainFormatter(logging.Formatter):
-    """Plain text formatter without colors for systemd journal.
-
-    Systemd journal adds its own metadata (timestamp, priority), so this
-    formatter outputs only the message text without ANSI escape codes.
-    """
+    """Plain text formatter without ANSI escape codes for journald and non-TTY streams."""
 
     def __init__(self) -> None:
         """Initialize plain formatter with message-only format."""
-        super().__init__('%(message)s')
+        super().__init__("%(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record as plain text.
+        """Format and URI-sanitize log record as plain text.
 
         Args:
             record: Log record to format.
 
         Returns:
-            Plain message string without formatting.
+            Sanitized plain-text log message.
         """
-        return record.getMessage()
+        return sanitize_log_uri(super().format(record))
 
 
 class ColoredFormatter(logging.Formatter):
-    """Formatter with ANSI colors for console output.
-
-    Compatible with bash colors.sh for consistent terminal appearance.
-    Applies level-specific colors to log messages. Level symbols from
-    LOG_SYMBOLS are prepended only when non-empty (currently empty by
-    design: color already conveys the level).
-
-    Attributes:
-        COLORS: Mapping of log levels to ANSI color codes.
-        SYMBOLS: Mapping of log levels to Unicode symbols.
-    """
+    """Formatter with ANSI colors and Unicode symbols for terminal output."""
 
     COLORS = LOG_COLORS
     SYMBOLS = LOG_SYMBOLS
 
     def __init__(self, include_timestamp: bool = False) -> None:
-        """Initialize colored formatter.
+        """Initialize colored formatter with optional HH:MM:SS timestamp.
 
         Args:
-            include_timestamp: If True, prepend timestamp to messages.
-                Defaults to False.
+            include_timestamp: Prepend ``HH:MM:SS`` timestamp when True.
         """
         self.include_timestamp = include_timestamp
-        format_string = '%(asctime)s - %(message)s' if include_timestamp else '%(message)s'
-        super().__init__(format_string, datefmt='%H:%M:%S')
+        fmt = "%(asctime)s - %(message)s" if include_timestamp else "%(message)s"
+        super().__init__(fmt, datefmt="%H:%M:%S")
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record with colors and symbols without mutating record state.
+        """Format log record with ANSI colors without mutating shared record state.
 
         Args:
             record: Log record to format.
@@ -107,75 +79,100 @@ class ColoredFormatter(logging.Formatter):
         Returns:
             Formatted message string with ANSI color codes.
         """
-        level_name = record.levelname
-        color = self.COLORS.get(level_name, '')
-        symbol = self.SYMBOLS.get(level_name, '')
-        reset = self.COLORS['RESET']
-        original_msg = record.msg
-        original_args = record.args
-        rendered_msg = record.getMessage()
+        color = self.COLORS.get(record.levelname, "")
+        symbol = self.SYMBOLS.get(record.levelname, "")
+        reset = self.COLORS["RESET"]
+        original_msg, original_args = record.msg, record.args
+        rendered = sanitize_log_uri(record.getMessage())
 
-        if symbol:
-            formatted_msg = f"{color}{symbol} {rendered_msg}{reset}"
-        else:
-            formatted_msg = f"{color}{rendered_msg}{reset}"
-
-        record.msg = formatted_msg
+        record.msg = (
+            f"{color}{symbol} {rendered}{reset}"
+            if symbol
+            else f"{color}{rendered}{reset}"
+        )
         record.args = None
         try:
             return super().format(record)
         finally:
-            record.msg = original_msg
-            record.args = original_args
+            record.msg, record.args = original_msg, original_args
+
+
+################################################################################
+# LOGGER MANAGER - Thread-Safe Logger Factory
+################################################################################
 
 
 class LoggerManager:
-    """Thread-safe logger factory with bash environment integration.
+    """Thread-safe logger factory with console, native journald, and ring handlers."""
 
-    Provides centralized logger management with support for console and
-    systemd journal handlers. Loggers are cached and reused.
-
-    Class Attributes:
-        _loggers: Cache of created logger instances.
-        _lock: Thread lock for safe logger creation.
-    """
-
-    _loggers: Dict[str, logging.Logger] = {}
+    _loggers: dict[str, logging.Logger] = {}
     _lock = threading.Lock()
+    _recent_records: deque[dict[str, str]] = deque(
+        maxlen=LoggingDefaults.MAX_LOG_LIMIT
+    )
+    _recent_error_records: deque[dict[str, str]] = deque(
+        maxlen=LoggingDefaults.MAX_LOG_LIMIT
+    )
 
     ############################################################################
-    # PUBLIC CLASS METHODS - Logger Factory
+    # PUBLIC CLASS METHODS - Logger Factory & Ring Buffer Access
     ############################################################################
 
     @classmethod
-    def get_logger(cls, name: str, **kwargs: Any) -> logging.Logger:
-        """Get or create a logger instance.
+    def get_recent_logs(
+        cls, limit: int = LoggingDefaults.DEFAULT_LOG_LIMIT
+    ) -> list[dict[str, str]]:
+        """Return recent in-memory log entries.
 
-        Thread-safe factory method that returns cached loggers or creates
-        new ones with the specified configuration.
+        Args:
+            limit: Maximum number of log entries to return.
+
+        Returns:
+            Chronological list of recent log dictionaries.
+        """
+        safe_limit = max(1, min(int(limit), LoggingDefaults.MAX_LOG_LIMIT))
+        with cls._lock:
+            items = list(cls._recent_records)
+        return items[-safe_limit:]
+
+    @classmethod
+    def get_recent_error_logs(
+        cls, limit: int = LoggingDefaults.DEFAULT_LOG_LIMIT
+    ) -> list[dict[str, str]]:
+        """Return recent in-memory WARNING/ERROR/CRITICAL log entries.
+
+        Args:
+            limit: Maximum number of warning/error log entries to return.
+
+        Returns:
+            Chronological list of recent warning/error log dictionaries.
+        """
+        safe_limit = max(1, min(int(limit), LoggingDefaults.MAX_LOG_LIMIT))
+        with cls._lock:
+            items = list(cls._recent_error_records)
+        return items[-safe_limit:]
+
+    @classmethod
+    def get_logger(cls, name: str, **kwargs: Any) -> logging.Logger:
+        """Get or create a cached logger instance in a thread-safe manner.
 
         Args:
             name: Logger name, typically the application or module name.
-            **kwargs: Configuration options:
-                level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-                daemon_mode: If True, only use journal handler (no console).
-                console_colors: If True, use ANSI colors on console output.
+            **kwargs: Optional configuration (``level``, ``daemon_mode``, ``console_colors``).
 
         Returns:
-            Configured logging.Logger instance.
-
-        Typical usage:
-            >>> logger = LoggerManager.get_logger('myapp', level='DEBUG')
-            >>> logger.info('Application started')
+            Configured ``logging.Logger`` instance.
         """
         with cls._lock:
             if name not in cls._loggers:
                 cls._loggers[name] = cls._create_logger(name, **kwargs)
             else:
-                if 'level' in kwargs and kwargs['level'] is not None:
-                    cls.set_level(cls._loggers[name], kwargs['level'])
-                if 'console_colors' in kwargs and kwargs['console_colors'] is not None:
-                    cls.set_console_colors(cls._loggers[name], bool(kwargs['console_colors']))
+                if kwargs.get("level") is not None:
+                    cls.set_level(cls._loggers[name], kwargs["level"])
+                if kwargs.get("console_colors") is not None:
+                    cls.set_console_colors(
+                        cls._loggers[name], bool(kwargs["console_colors"])
+                    )
             return cls._loggers[name]
 
     @classmethod
@@ -195,18 +192,48 @@ class LoggerManager:
         for handler in logger.handlers:
             handler.setLevel(numeric_level)
 
+    @staticmethod
+    def _should_use_ansi(stream: Any, requested: bool) -> bool:
+        """Check whether ANSI colors are allowed on ``stream`` (TTY, NO_COLOR, daemon).
+
+        Args:
+            stream: Target output stream.
+            requested: Whether console colors were requested in configuration.
+
+        Returns:
+            True if ANSI escape sequences should be emitted.
+        """
+        if (
+            not requested
+            or os.environ.get("NO_COLOR")
+            or os.environ.get("TERM") == "dumb"
+        ):
+            return False
+        if (
+            os.environ.get("DAEMON_MODE") == "1"
+            or os.environ.get("INVOCATION_ID")
+            or os.environ.get("JOURNAL_STREAM")
+        ):
+            return False
+        isatty_fn = getattr(stream, "isatty", None)
+        return bool(callable(isatty_fn) and isatty_fn())
+
     @classmethod
     def set_console_colors(cls, logger: logging.Logger, console_colors: bool) -> None:
-        """Update console handler formatter based on console_colors setting.
+        """Update console handler formatter based on ``console_colors`` and TTY state.
 
         Args:
             logger: Logger instance to update.
-            console_colors: If True, use ColoredFormatter; otherwise PlainFormatter.
+            console_colors: Whether ANSI colors are enabled in configuration.
         """
-        formatter = ColoredFormatter(include_timestamp=False) if console_colors else PlainFormatter()
         for handler in logger.handlers:
             if type(handler) is logging.StreamHandler:
-                handler.setFormatter(formatter)
+                use_ansi = cls._should_use_ansi(handler.stream, console_colors)
+                handler.setFormatter(
+                    ColoredFormatter(include_timestamp=False)
+                    if use_ansi
+                    else PlainFormatter()
+                )
 
     ############################################################################
     # PRIVATE CLASS METHODS - Logger Configuration
@@ -214,31 +241,46 @@ class LoggerManager:
 
     @classmethod
     def _create_logger(cls, name: str, **kwargs: Any) -> logging.Logger:
-        """Create and configure a new logger instance.
+        """Create and configure a new logger instance with console/journal/ring handlers.
 
         Args:
-            name: Logger name for identification.
-            **kwargs: Configuration options (level, daemon_mode, console_colors).
+            name: Logger name.
+            **kwargs: Optional configuration overrides.
 
         Returns:
-            Configured logging.Logger instance with handlers.
+            Configured ``logging.Logger`` instance.
         """
         running_under_systemd = bool(
-            os.environ.get('INVOCATION_ID')
-            or os.environ.get('JOURNAL_STREAM')
-            or os.environ.get('DAEMON_MODE') == '1'
+            os.environ.get("INVOCATION_ID")
+            or os.environ.get("JOURNAL_STREAM")
+            or os.environ.get("DAEMON_MODE") == "1"
         )
-        daemon_mode = kwargs.get('daemon_mode', running_under_systemd)
-        console_colors = bool(kwargs.get('console_colors', LoggingDefaults.CONSOLE_COLORS))
-        log_level = cls._resolve_log_level(kwargs.get('level', None))
+        daemon_mode = bool(kwargs.get("daemon_mode", running_under_systemd))
+        console_colors = bool(
+            kwargs.get("console_colors", LoggingDefaults.CONSOLE_COLORS)
+        )
+        log_level = cls._resolve_log_level(kwargs.get("level"))
 
         logger = logging.getLogger(name)
         logger.setLevel(log_level)
+        logger.propagate = False
         for handler in logger.handlers[:]:
+            handler.close()
             logger.removeHandler(handler)
+
+        journal_attached = cls._setup_journal_handler(logger, name, log_level)
         if not daemon_mode:
-            cls._setup_console_handler(logger, log_level, console_colors=console_colors)
-        cls._setup_journal_handler(logger, name, log_level)
+            cls._setup_console_handler(
+                logger, log_level, console_colors=console_colors
+            )
+        elif not journal_attached:
+            cls._setup_console_handler(logger, log_level, console_colors=False)
+
+        ring_handler = RingBufferHandler(
+            cls._recent_records, cls._recent_error_records, cls._lock
+        )
+        ring_handler.setLevel(log_level)
+        logger.addHandler(ring_handler)
         cls._setup_live_logging()
         return logger
 
@@ -256,12 +298,12 @@ class LoggerManager:
             if isinstance(level, str):
                 return getattr(logging, level.upper(), logging.INFO)
             return int(level)
-        if os.environ.get('DEBUG', '0') == '1':
+        if os.environ.get("DEBUG", "0") == "1":
             return logging.DEBUG
-        if os.environ.get('VERBOSE', '0') == '1':
+        if os.environ.get("VERBOSE", "0") == "1":
             return logging.INFO
         return logging.WARNING
-    
+
     @classmethod
     def _setup_console_handler(
         cls,
@@ -269,82 +311,86 @@ class LoggerManager:
         level: int,
         console_colors: bool = LoggingDefaults.CONSOLE_COLORS,
     ) -> None:
-        """Setup console handler with optional ANSI color formatting.
+        """Attach stderr console ``StreamHandler`` with TTY-aware ANSI color formatting.
 
         Args:
             logger: Logger instance to configure.
             level: Minimum log level for the handler.
-            console_colors: If True, use ColoredFormatter; otherwise PlainFormatter.
+            console_colors: Whether ANSI colors are requested.
         """
-        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(level)
-        console_formatter = ColoredFormatter(include_timestamp=False) if console_colors else PlainFormatter()
-        console_handler.setFormatter(console_formatter)
+        use_ansi = cls._should_use_ansi(sys.stderr, console_colors)
+        formatter = (
+            ColoredFormatter(include_timestamp=False) if use_ansi else PlainFormatter()
+        )
+        console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
-    
-    @classmethod
-    def _setup_journal_handler(cls, logger: logging.Logger, name: str, level: int) -> None:
-        """Setup systemd journal handler if available.
 
-        Uses SYSLOG_IDENTIFIER from environment for consistent journal entries.
-        Falls back gracefully if systemd is not available.
+    @classmethod
+    def _setup_journal_handler(
+        cls, logger: logging.Logger, name: str, level: int
+    ) -> bool:
+        """Attach pure-Python ``JournaldSocketHandler`` when journald socket exists.
 
         Args:
             logger: Logger instance to configure.
-            name: Logger name (unused, kept for API compatibility).
+            name: Logger name (kept for signature compatibility).
             level: Minimum log level for the handler.
+
+        Returns:
+            True if the journald handler was attached, False when unavailable.
 
         Raises:
-            ConfigError: If journal setup fails unexpectedly.
+            ConfigError: If socket initialization fails unexpectedly.
         """
-        if journal is None:
-            return
-
+        del name
+        socket_path = LoggingDefaults.JOURNAL_SOCKET_PATH
+        if not os.path.exists(socket_path):
+            return False
         try:
-            journal_handler = journal.JournalHandler(SYSLOG_IDENTIFIER=__syslog_identifier__)
+            journal_handler = JournaldSocketHandler(
+                syslog_identifier=__syslog_identifier__,
+                socket_path=socket_path,
+            )
             journal_handler.setLevel(level)
-
-            # Use PlainFormatter for journal (no ANSI codes, systemd adds metadata)
-            journal_formatter = PlainFormatter()
-            journal_handler.setFormatter(journal_formatter)
+            journal_handler.setFormatter(PlainFormatter())
             logger.addHandler(journal_handler)
-        except Exception as e:
-            raise ConfigError(f"Failed to setup journal logging: {e}")
-    
+            return True
+        except OSError:
+            return False
+        except Exception as exc:
+            raise ConfigError(f"Failed to setup journal logging: {exc}") from exc
+
     @classmethod
     def _setup_live_logging(cls) -> None:
-        """Configure line buffering for real-time log output.
+        """Configure line buffering on standard streams for real-time log visibility."""
+        for stream in (sys.stdout, sys.stderr):
+            reconfigure = getattr(stream, "reconfigure", None)
+            if callable(reconfigure):
+                try:
+                    reconfigure(line_buffering=True)
+                except Exception:
+                    pass
 
-        Enables immediate log visibility by setting stdout/stderr to
-        line-buffered mode. Essential for live log viewing with journalctl -f.
-        """
-        try:
-            sys.stdout.reconfigure(line_buffering=True)
-            sys.stderr.reconfigure(line_buffering=True)
-        except Exception:
-            sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
-            sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
 
 ################################################################################
 # CUSTOM LOG LEVELS - Extended Logging Functionality
 ################################################################################
 
-# Add SUCCESS log level
-logging.addLevelName(LoggingDefaults.SUCCESS_LEVEL, 'SUCCESS')
+logging.addLevelName(LoggingDefaults.SUCCESS_LEVEL, "SUCCESS")
+
 
 def success(self: logging.Logger, message: object, *args: Any, **kwargs: Any) -> None:
-    """Log a success message at SUCCESS level (25).
-
-    Custom log level between INFO (20) and WARNING (30) for indicating
-    successful operations.
+    """Log a success message at custom SUCCESS level (25).
 
     Args:
         message: Message to log.
-        *args: Additional positional arguments for string formatting.
-        **kwargs: Additional keyword arguments passed to _log().
+        *args: Positional arguments for message formatting.
+        **kwargs: Keyword arguments forwarded to ``_log()``.
     """
     if self.isEnabledFor(LoggingDefaults.SUCCESS_LEVEL):
         self._log(LoggingDefaults.SUCCESS_LEVEL, message, args, **kwargs)
 
-# Add success method to Logger class
-logging.Logger.success = success
+
+logging.Logger.success = success  # type: ignore[attr-defined]

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Main application module containing core business logic.
+"""Main application orchestrator for DynDNS daemon and single-shot cycles.
 
-This module provides the Application class which acts as an orchestrator
-for the DynDNS daemon. It coordinates data loading, delegates logic to
-services, and manages the daemon cycle lifecycle.
+Coordinates public IP detection, SQLite state loading, provider synchronization,
+and DNS record updates by delegating domain work to ``SyncService`` and
+``UpdateService``.
 
 Author: Manuel Ziel
 License: MIT
@@ -13,68 +13,62 @@ License: MIT
 # IMPORTS & DEPENDENCIES
 ################################################################################
 
-import time
 import threading
-from typing import Optional, Any
+import time
+from typing import Any
 
-from .utils.colors import LOG_SYMBOLS
-from .core.exceptions import (
-    DatabaseError,
-    NetworkError,
-    APIError,
-)
 from .core.constants import DaemonDefaults
+from .core.exceptions import APIError, ConfigError, DatabaseError, NetworkError
 from .core.logger import LoggerManager
 from .network import NetworkData
 from .services.sync_service import SyncService
 from .services.update_service import UpdateService
-
+from .utils.colors import LOG_SYMBOLS
 
 ################################################################################
-# APPLICATION CLASS - Core Business Logic
+# APPLICATION CLASS
 ################################################################################
+
 
 class Application:
-    """Main application class for DynDNS daemon cycle management.
-
-    Provides orchestration for IP detection, DNS record synchronization,
-    and automatic DNS updates by delegating to specialized services.
+    """Main orchestrator for DynDNS IP detection and DNS update cycles.
 
     Attributes:
-        config: Configuration object from ConfigManager.
-        logger: Logger instance from LoggerManager.
-        running: Whether the application is currently running.
-        database: Database instance for zone and record storage.
-        network: NetworkData instance for IP detection.
-        sync_service: Service for provider API reconciliation.
-        update_service: Service for IP comparisons and DNS updates.
-        enabled_zones: Cached list of zones being processed in the current cycle.
+        config: ``ConfigManager`` instance.
+        logger: Application logger instance.
+        running: Whether a cycle is actively executing.
+        database: ``Database`` instance for zone and record persistence.
+        network: ``NetworkData`` instance for public IP probing.
+        sync_service: ``SyncService`` for provider reconciliation.
+        update_service: ``UpdateService`` for DNS update execution.
+        enabled_zones: Cached enabled zone list for the active cycle.
     """
 
     def __init__(self, config: Any, logger: Any) -> None:
-        """Initialize application with configuration and logger.
+        """Initialize application services and verify database schema.
 
         Args:
-            config: Configuration object from ConfigManager.
-            logger: Logger instance from LoggerManager.
+            config: ``ConfigManager`` instance.
+            logger: Logger instance from ``LoggerManager``.
+
+        Raises:
+            DatabaseError: If schema compatibility verification fails.
         """
         self.config = config
         self.logger = logger
         self.running = False
         self._stop_event = threading.Event()
-        self._cycle_thread: Optional[threading.Thread] = None
+        self._cycle_thread: threading.Thread | None = None
         self.database = config.db
         if not self.database.check_schema_compatibility():
             raise DatabaseError("Database schema validation or migration failed.")
         self.network = NetworkData(config=config, logger=logger)
-        
         self.sync_service = SyncService(
             config=self.config,
             database=self.database,
             network=self.network,
             logger=self.logger,
         )
-        
         self.update_service = UpdateService(
             config=self.config,
             database=self.database,
@@ -82,17 +76,19 @@ class Application:
             sync_service=self.sync_service,
             logger=self.logger,
         )
-        
-        self.enabled_zones = None
+        self.enabled_zones: list[dict[str, Any]] | None = None
         self._is_first_cycle = True
         self.logger.info("Application initialized")
 
+    ############################################################################
+    # PUBLIC INTERFACE - Cycle Execution & Lifecycle
+    ############################################################################
 
     def run_cycle(self) -> bool:
-        """Execute one daemon cycle (load → process → save → finalize).
+        """Execute one full load -> process -> save -> finalize cycle.
 
         Returns:
-            True if cycle completed successfully, False otherwise.
+            True if the cycle completed without error, False otherwise.
         """
         self.running = True
         self._cycle_thread = threading.current_thread()
@@ -103,34 +99,36 @@ class Application:
                 return False
             self.logger.debug("Application cycle completed successfully")
             return True
-        except (DatabaseError, NetworkError, APIError) as e:
-            self.logger.error(f"Application cycle failed: {e}")
+        except (DatabaseError, NetworkError, APIError) as exc:
+            self.logger.error(f"Application cycle failed: {exc}")
             self._reset_state()
             return False
-        except Exception as e:
-            self.logger.error(f"Unexpected error in application cycle: {e}")
+        except Exception as exc:
+            self.logger.error(f"Unexpected error in application cycle: {exc}")
             self._reset_state()
             return False
         finally:
             self.running = False
             self._cycle_thread = None
 
-
     def _execute_cycle_steps(self) -> bool:
-        """Execute sequential load, process, save, and finalize steps.
+        """Run sequential cycle stages while honoring ``_stop_event``.
 
         Returns:
-            True if all steps succeeded, False otherwise.
+            True if all stages succeeded, False otherwise.
         """
         if self._stop_event.is_set() or not self._load_data():
             self.logger.warning("Data loading failed")
             return False
-        if self._stop_event.is_set() or not self.update_service.process_records(self.enabled_zones):
+        zones = self.enabled_zones or []
+        if self._stop_event.is_set() or not self.update_service.process_records(zones):
             self.logger.warning("Data processing failed")
             return False
         is_startup = self._is_first_cycle
         self._is_first_cycle = False
-        if self._stop_event.is_set() or not self.update_service.save_updates(self.enabled_zones, is_startup=is_startup):
+        if self._stop_event.is_set() or not self.update_service.save_updates(
+            zones, is_startup=is_startup
+        ):
             self.logger.warning("Saving updates failed")
             return False
         if not self._finalize_cycle():
@@ -138,208 +136,201 @@ class Application:
             return False
         return True
 
-
-    ############################################################################
-    # PUBLIC INTERFACE - Lifecycle Management
-    ############################################################################
-
     def stop(self) -> bool:
-        """Stop application gracefully with timeout.
-
-        Waits up to 30 seconds for pending operations to complete.
+        """Request cycle stop and wait up to ``DaemonDefaults.STOP_TIMEOUT``.
 
         Returns:
-            True if stopped gracefully, False if timeout reached.
+            True if stopped within timeout, False otherwise.
         """
         self.logger.info("Stopping application...")
         self._stop_event.set()
-
         max_wait = DaemonDefaults.STOP_TIMEOUT
         wait_count = 0
         is_other_thread = (
             self._cycle_thread is not None
             and self._cycle_thread is not threading.current_thread()
         )
-
         while self.running and is_other_thread and wait_count < max_wait:
-            self.logger.debug(
-                f"Waiting for application to stop... ({wait_count}/{max_wait})"
-            )
+            self.logger.debug(f"Waiting for application to stop... ({wait_count}/{max_wait})")
             time.sleep(DaemonDefaults.STOP_CHECK_INTERVAL)
             wait_count += 1
-
         self.running = False
         if wait_count >= max_wait:
             self.logger.warning("Application did not stop gracefully within timeout")
             return False
-
         self.logger.info("Application stopped successfully")
         return True
 
-
     def cleanup(self) -> None:
-        """Cleanup resources (database connections, etc.).
-
-        Stops the application if running and closes all open connections.
-        """
+        """Close cached HTTP sessions and pooled SQLite database connections."""
         self.logger.info("Cleaning up application resources...")
-
         try:
             if self.running:
                 self.stop()
-
+            if self.sync_service:
+                self.sync_service.close()
             if self.database:
                 self.database.close()
                 self.logger.debug("Database connections closed")
-
             self.logger.info("Application cleanup completed")
-
-        except Exception as e:
-            self.logger.error(f"Error during application cleanup: {e}")
-
-
-    ############################################################################
-    # PUBLIC INTERFACE - Status and Configuration
-    ############################################################################
+        except Exception as exc:
+            self.logger.error(f"Error during application cleanup: {exc}")
 
     def is_running(self) -> bool:
-        """Return current running state.
+        """Return whether an application cycle is currently executing.
 
         Returns:
-            True if application is running, False otherwise.
+            Boolean running state.
         """
         return self.running
 
     def reload_config(self) -> None:
-        """Reload configuration during runtime.
-
-        Allows hot-reloading of configuration without restart.
-        Triggered by SIGHUP signal in daemon mode.
-        """
+        """Hot-reload TOML configuration, logger levels, and HTTP client cache."""
         self.logger.info("Reloading application configuration...")
-
         try:
             if hasattr(self.config, "reload"):
                 self.config.reload()
-
             LoggerManager.set_level(self.logger, self.config.log_level)
             LoggerManager.set_console_colors(self.logger, self.config.console_colors)
-
-            self.network.ipv4_enabled = self.config.network_ipv4_enabled
-            self.network.ipv6_enabled = self.config.network_ipv6_enabled
-            self.network.ipv4_detection_url = self.config.network_ipv4_detection_url
-            self.network.ipv6_detection_url = self.config.network_ipv6_detection_url
-            self.network.timeout = self.config.network_timeout
-            self.network.retry_attempts = self.config.network_retry_attempts
-
-            self.sync_service._provider_clients.clear()
-
+            self.network.setup(
+                ipv4_enabled=self.config.network_ipv4_enabled,
+                ipv6_enabled=self.config.network_ipv6_enabled,
+                ipv4_url=self.config.network_ipv4_detection_url,
+                ipv6_url=self.config.network_ipv6_detection_url,
+                timeout=self.config.network_timeout,
+                retries=self.config.network_retry_attempts,
+                logger=self.logger,
+            )
+            self.sync_service.close()
             self.logger.info("Configuration reloaded successfully")
-
-        except Exception as e:
-            self.logger.error(f"Failed to reload configuration: {e}")
-
+        except ConfigError as exc:
+            self.logger.error(f"Failed to reload configuration: {exc}")
+        except Exception as exc:
+            self.logger.error(f"Unexpected error reloading configuration: {exc}")
 
     ############################################################################
-    # PRIVATE METHODS - Cycle Pipeline
+    # PRIVATE METHODS - Cycle Data Pipeline
     ############################################################################
 
     def _load_data(self) -> bool:
-        """Load current IP addresses and database state.
-
-        Detects current public IP addresses and loads enabled zones with
-        their records from the database.
+        """Detect public IP addresses and load enabled zones and records.
 
         Returns:
-            True if data loaded successfully, False otherwise.
+            True if at least one IP was detected and DB loaded cleanly.
         """
         try:
             if not self._detect_and_log_ips():
                 return False
             return self._load_zones_and_records()
-        except (NetworkError, DatabaseError) as e:
-            self.logger.error(f"Network check or database load failed: {e}")
+        except (NetworkError, DatabaseError) as exc:
+            self.logger.error(f"Network check or database load failed: {exc}")
             return False
 
-
     def _detect_and_log_ips(self) -> bool:
-        """Detect public IPv4/IPv6 addresses and log any changes.
+        """Probe public IPv4/IPv6 addresses and log address transitions.
 
         Returns:
-            True if at least one IP address was detected, False otherwise.
+            True if at least one protocol yielded a valid IP address.
         """
         self.logger.debug("Checking network and IP addresses...")
         ipv4, ipv6 = self.network.load_current_ip_addresses()
-
-        if ipv4:
-            self.logger.debug(f"IPv4 address detected: {ipv4}")
-        else:
-            self.logger.warning("No IPv4 address detected")
-
-        if ipv6:
-            self.logger.debug(f"IPv6 address detected: {ipv6}")
-        else:
-            self.logger.warning("No IPv6 address detected")
-
+        self._log_detected_protocol("IPv4", ipv4, self.network.ipv4_enabled)
+        self._log_detected_protocol("IPv6", ipv6, self.network.ipv6_enabled)
         if not ipv4 and not ipv6:
             self.logger.error("No IP addresses detected - cannot proceed")
             return False
-
         changes = self.network.has_ip_changed()
-        if changes["ipv4_changed"]:
-            self.logger.info(f"IPv4 address changed: {self.network.last_ipv4_address} {LOG_SYMBOLS['ARROW']} {ipv4}")
-        else:
-            self.logger.debug(f"IPv4 address unchanged: {ipv4}")
-
-        if changes["ipv6_changed"]:
-            self.logger.info(f"IPv6 address changed: {self.network.last_ipv6_address} {LOG_SYMBOLS['ARROW']} {ipv6}")
-        else:
-            self.logger.debug(f"IPv6 address unchanged: {ipv6}")
+        self._log_ip_transition("IPv4", self.network.last_ipv4_address, ipv4, changes["ipv4_changed"])
+        self._log_ip_transition("IPv6", self.network.last_ipv6_address, ipv6, changes["ipv6_changed"])
         return True
 
+    def _log_detected_protocol(
+        self, label: str, address: str | None, enabled: bool
+    ) -> None:
+        """Log detection status for a single IP protocol family.
+
+        Args:
+            label: Protocol label (``'IPv4'`` or ``'IPv6'``).
+            address: Detected IP address or ``None``.
+            enabled: Whether probing for ``label`` is enabled.
+        """
+        if address:
+            self.logger.debug(f"{label} address detected: {address}")
+        elif enabled:
+            self.logger.warning(f"No {label} address detected")
+
+    def _log_ip_transition(
+        self, label: str, previous: str | None, current: str | None, changed: bool
+    ) -> None:
+        """Log whether an IP protocol address changed since the previous cycle.
+
+        Args:
+            label: Protocol label (``'IPv4'`` or ``'IPv6'``).
+            previous: Previously saved IP address.
+            current: Newly detected IP address.
+            changed: Boolean change flag from ``NetworkData.has_ip_changed()``.
+        """
+        if current is None:
+            return
+        if changed:
+            self.logger.info(
+                f"{label} address changed: {previous} {LOG_SYMBOLS['ARROW']} {current}"
+            )
+        else:
+            self.logger.debug(f"{label} address unchanged: {current}")
 
     def _load_zones_and_records(self) -> bool:
-        """Load enabled zones and their active records from the database.
+        """Load enabled zones and their active records from SQLite.
 
         Returns:
-            True after loading zones and records into self.enabled_zones.
+            True once zone and record structures are populated.
         """
         self.logger.debug("Loading database state...")
         zones_from_db = self.database.get_all_enabled_zones()
         if not zones_from_db:
+            self.enabled_zones = []
             self.logger.warning("No enabled zones found in database")
             return True
-
         self.enabled_zones = [dict(zone) for zone in zones_from_db]
         total_records = 0
         for zone in self.enabled_zones:
-            records_from_db = self.database.get_records_by_zone(zone["id"], enabled_only=True)
-            zone["records"] = [dict(record) for record in records_from_db]
-            for record in zone["records"]:
-                record["current_ip"] = (
-                    {
-                        "ip_address": record["ip_address"],
-                        "last_checked_at": record.get("last_checked_at"),
-                        "last_changed_at": record.get("last_changed_at"),
-                    }
-                    if record.get("ip_address")
-                    else None
-                )
-                total_records += 1
-            self.logger.debug(f"Loaded zone '{zone['zone_name']}' with {len(zone['records'])} records")
-
-        self.logger.debug(f"Loaded {len(self.enabled_zones)} zones with {total_records} total records")
-        self.logger.debug("Data loading completed")
+            zone["records"] = self._load_zone_records_with_ip(zone["id"])
+            total_records += len(zone["records"])
+            self.logger.debug(
+                f"Loaded zone '{zone['zone_name']}' with {len(zone['records'])} records"
+            )
+        self.logger.debug(
+            f"Loaded {len(self.enabled_zones)} zones with {total_records} total records"
+        )
         return True
 
+    def _load_zone_records_with_ip(self, zone_id: int) -> list[dict[str, Any]]:
+        """Fetch enabled records for ``zone_id`` with nested ``current_ip`` metadata.
 
-    def _finalize_cycle(self) -> bool:
-        """Save IP state and cleanup temporary data.
-
-        Stores current IPs as last-known values for next cycle comparison.
+        Args:
+            zone_id: Database zone ID.
 
         Returns:
-            True if finalization completed successfully, False otherwise.
+            List of enriched record dictionaries.
+        """
+        records = [dict(row) for row in self.database.get_records_by_zone(zone_id, enabled_only=True)]
+        for record in records:
+            record["current_ip"] = (
+                {
+                    "ip_address": record["ip_address"],
+                    "last_checked_at": record.get("last_checked_at"),
+                    "last_changed_at": record.get("last_changed_at"),
+                }
+                if record.get("ip_address")
+                else None
+            )
+        return records
+
+    def _finalize_cycle(self) -> bool:
+        """Commit detected IPs as last-known values and clear cycle state.
+
+        Returns:
+            True on success, False if state persistence fails.
         """
         try:
             self.network.save_current_as_last()
@@ -347,26 +338,14 @@ class Application:
                 f"Saved IPs for next cycle: IPv4={self.network.last_ipv4_address}, "
                 f"IPv6={self.network.last_ipv6_address}"
             )
-
             self.enabled_zones = None
-
             self.logger.debug("Cycle finalized")
             return True
-
-        except (NetworkError, DatabaseError) as e:
-            self.logger.error(f"Finalization failed: {e}")
+        except (NetworkError, DatabaseError) as exc:
+            self.logger.error(f"Finalization failed: {exc}")
             return False
 
-
     def _reset_state(self) -> None:
-        """Reset application state after errors.
-
-        Clears cached zones and records to ensure clean state for next cycle.
-        """
-        try:
-            self.enabled_zones = None
-
-            self.logger.debug("Application state reset")
-
-        except Exception as e:
-            self.logger.error(f"Unexpected error resetting state: {e}")
+        """Clear transient per-cycle zone cache after an error."""
+        self.enabled_zones = None
+        self.logger.debug("Application state reset")

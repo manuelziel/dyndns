@@ -1,35 +1,28 @@
 #!/usr/bin/env python3
-"""Application constants for magic strings and status values.
+"""Application constants, enums, and default settings for DynDNS.
 
-This module provides centralized constants for sync status values, update
-status codes, DNS record types, and configuration export formats.
-
-Typical usage:
-    >>> from src.core.constants import SyncStatus, RecordType
-    >>> status = SyncStatus.SYNCED
-    >>> if RecordType.is_supported('A'):
-    ...     print('Supported')
+Centralizes all application metadata, status enumerations, HTTP constants,
+security redaction defaults, database wear-leveling parameters, and service defaults.
 
 Author: Manuel Ziel
 License: MIT
 """
 
 ################################################################################
+# IMPORTS & DEPENDENCIES
+################################################################################
+
+from enum import StrEnum
+
+################################################################################
 # APPLICATION SETTINGS
 ################################################################################
 
-class AppSettings:
-    """Global application metadata and settings.
 
-    Attributes:
-        VERSION: Current software version.
-        AUTHOR: Author's name.
-        EMAIL: Author's email.
-        DESCRIPTION: Brief description of the software.
-        SOFTWARE_NAME: Name of the application.
-        SYSLOG_IDENTIFIER: Systemd syslog identifier.
-    """
-    VERSION = "1.0.3"
+class AppSettings:
+    """Global application metadata and settings."""
+
+    VERSION = "1.0.4"
     AUTHOR = "Manuel Ziel"
     EMAIL = "manuelziel@gmail.com"
     DESCRIPTION = "Dynamic DNS Client"
@@ -38,158 +31,102 @@ class AppSettings:
 
 
 ################################################################################
-# SYNC STATUS - Record synchronization states
+# SYNC & UPDATE STATUS ENUMERATIONS
 ################################################################################
 
-class SyncStatus:
-    """DNS Record synchronization status constants.
 
-    Attributes:
-        SYNCED: Record is synchronized with provider.
-        ORPHANED: Record exists at provider but not locally.
-        LOCAL_ONLY: Record exists locally but not at provider.
-        CONFLICT: Record has conflicting local and provider states.
-        PENDING_SYNC: Record is waiting to be synchronized.
-        NEW: Newly created record.
-        UPDATED: Recently updated record.
-    """
-    SYNCED = 'synced'
-    ORPHANED = 'orphaned'
-    LOCAL_ONLY = 'local_only'
-    CONFLICT = 'conflict'
-    PENDING_SYNC = 'pending_sync'
-    NEW = 'new'
-    UPDATED = 'updated'
+class SyncStatus(StrEnum):
+    """DNS record synchronization status constants."""
+
+    SYNCED = "synced"
+    ORPHANED = "orphaned"
+    LOCAL_ONLY = "local_only"
+    CONFLICT = "conflict"
+    PENDING_SYNC = "pending_sync"
+    NEW = "new"
+    UPDATED = "updated"
 
 
-################################################################################
-# UPDATE STATUS - DNS update operation results
-################################################################################
+class UpdateStatus(StrEnum):
+    """DNS update operation result status constants."""
 
-class UpdateStatus:
-    """DNS update operation result status constants.
-
-    Attributes:
-        SUCCESS: Update completed successfully.
-        FAILED: Update failed with error.
-        SKIPPED: Update was skipped (no change needed).
-        UPDATED: Record was updated.
-        TOTAL: Used for counting total operations.
-    """
-    SUCCESS = 'success'
-    FAILED = 'failed'
-    SKIPPED = 'skipped'
-    UPDATED = 'updated'
-    TOTAL = 'total'
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    UPDATED = "updated"
+    TOTAL = "total"
 
 
-################################################################################
-# SUBDOMAIN - Common subdomain constants
-################################################################################
+class Subdomain(StrEnum):
+    """Common subdomain constants for DynDNS records."""
 
-class Subdomain:
-    """Common subdomain constants for DynDNS records.
-
-    Attributes:
-        ROOT: Root domain marker ('@' for example.com).
-        WWW: WWW subdomain prefix.
-    """
-    ROOT = '@'      # Root domain (e.g., example.com)
-    WWW = 'www'     # WWW subdomain (e.g., www.example.com)
+    ROOT = "@"
+    WWW = "www"
 
 
-################################################################################
-# RECORD TYPES - Supported DNS record types
-################################################################################
+class RecordType(StrEnum):
+    """Supported DNS record type constants."""
 
-class RecordType:
-    """DNS record type constants.
+    A = "A"
+    AAAA = "AAAA"
 
-    Attributes:
-        A: IPv4 address record type.
-        AAAA: IPv6 address record type.
-    """
-    A = 'A'
-    AAAA = 'AAAA'
-    
     @classmethod
     def is_supported(cls, record_type: str) -> bool:
-        """Check if record type is supported for DynDNS.
+        """Check whether ``record_type`` is supported for DynDNS updates.
 
         Args:
             record_type: DNS record type string to validate.
 
         Returns:
-            True if supported (A or AAAA), False otherwise.
+            True if supported (``'A'`` or ``'AAAA'``), False otherwise.
         """
         return record_type in (cls.A, cls.AAAA)
 
 
-################################################################################
-# PLACEHOLDER IPS - Default IPs for record creation
-################################################################################
-
 class PlaceholderIP:
-    """Placeholder IP addresses for initial record creation.
+    """Placeholder IP addresses for initial DNS record creation."""
 
-    Attributes:
-        IPV4: Default IPv4 placeholder ('0.0.0.0').
-        IPV6: Default IPv6 placeholder ('::').
-    """
-    IPV4 = '0.0.0.0'
-    IPV6 = '::'
-    
+    IPV4 = "0.0.0.0"
+    IPV6 = "::"
+
     @classmethod
     def get(cls, record_type: str) -> str:
-        """Get placeholder IP for record type.
+        """Return placeholder IP address matching ``record_type``.
 
         Args:
-            record_type: DNS record type ('A' or 'AAAA').
+            record_type: DNS record type (``'A'`` or ``'AAAA'``).
 
         Returns:
             Placeholder IP address string.
 
         Raises:
-            ValueError: If record_type is not supported.
+            ValueError: If ``record_type`` is not supported.
         """
         if record_type == RecordType.A:
             return cls.IPV4
-        elif record_type == RecordType.AAAA:
+        if record_type == RecordType.AAAA:
             return cls.IPV6
-        else:
-            raise ValueError(f"Unsupported record type: {record_type}")
+        raise ValueError(f"Unsupported record type: {record_type}")
 
 
 ################################################################################
-# HTTP METHODS - Standard HTTP Verbs
+# HTTP CONSTANTS
 ################################################################################
 
-class HTTPMethod:
-    """Namespace for standard HTTP methods."""
+
+class HTTPMethod(StrEnum):
+    """Standard HTTP request verbs."""
+
     GET = "GET"
     POST = "POST"
     PUT = "PUT"
+    PATCH = "PATCH"
     DELETE = "DELETE"
 
 
-################################################################################
-# HTTP STATUS CODES - Standard HTTP Response Codes
-################################################################################
-
 class HTTPStatus:
-    """Namespace for HTTP response status codes.
+    """Standard HTTP response status codes."""
 
-    Attributes:
-        OK: Request succeeded (200).
-        CREATED: Request succeeded and resource created (201).
-        NO_CONTENT: Request succeeded with no response content (204).
-        BAD_REQUEST: Malformed request or invalid parameters (400).
-        UNAUTHORIZED: Authentication failed (401).
-        FORBIDDEN: Permission denied (403).
-        NOT_FOUND: Resource not found (404).
-        TOO_MANY_REQUESTS: Rate limit exceeded (429).
-        INTERNAL_SERVER_ERROR: Server encountered an error (500).
-    """
     OK = 200
     CREATED = 201
     NO_CONTENT = 204
@@ -199,40 +136,47 @@ class HTTPStatus:
     NOT_FOUND = 404
     TOO_MANY_REQUESTS = 429
     INTERNAL_SERVER_ERROR = 500
+    BAD_GATEWAY = 502
+    SERVICE_UNAVAILABLE = 503
+    GATEWAY_TIMEOUT = 504
 
-
-################################################################################
-# HTTP HEADERS - Standard HTTP Header Names and Values
-################################################################################
 
 class HTTPHeader:
-    """Namespace for standard HTTP headers."""
+    """Standard HTTP header names."""
+
     ACCEPT = "accept"
     CONTENT_TYPE = "Content-Type"
     X_API_KEY = "X-API-Key"
+    RETRY_AFTER = "Retry-After"
 
 
 class HTTPHeaderValue:
-    """Namespace for standard HTTP header values."""
+    """Standard HTTP header values."""
+
     APPLICATION_JSON = "application/json"
 
 
 ################################################################################
-# ENVIRONMENT VARIABLES - System Environment Keys
+# ENVIRONMENT, OWNERSHIP & SECURITY DEFAULTS
 ################################################################################
 
-class EnvKeys:
-    """Namespace for environment variable keys."""
+
+class EnvKeys(StrEnum):
+    """Environment variable keys exported by the Bash runtime wrapper."""
+
     SERVICE_USER = "SERVICE_USER"
     SERVICE_GROUP = "SERVICE_GROUP"
+    DAEMON_MODE = "DAEMON_MODE"
+    CONFIG_FILE = "CONFIG_FILE"
+    DATA_DIR = "DATA_DIR"
+    RUNTIME_DIR = "RUNTIME_DIR"
 
-
-################################################################################
-# SYSTEM DEFAULTS - User Account and Permission Defaults
-################################################################################
 
 class OwnershipDefaults:
-    """Default permissions and user names for ownership handoff."""
+    """Default permissions and account names for service ownership handoff."""
+
+    FILE_MODE_PRIVATE = 0o600
+    FILE_MODE_GROUP_READ = 0o640
     FILE_MODE_GROUP_WRITE = 0o660
     DIR_MODE_GROUP_WRITE = 0o770
     ROOT_USER = "root"
@@ -240,88 +184,87 @@ class OwnershipDefaults:
     PLACEHOLDER_GROUP = "[SERVICE_GROUP]"
 
 
-################################################################################
-# ENCRYPTION SETTINGS - Encryption Specifications
-################################################################################
-
 class EncryptionDefaults:
     """Default values for Fernet encryption key management."""
+
     KEY_FILE_MODE = 0o600
     FERNET_KEY_LENGTH = 44
 
 
+class SecurityDefaults:
+    """Default log sanitization and secret redaction settings."""
+
+    REDACTED_VALUE = "**REDACTED**"
+    SENSITIVE_QUERY_KEYS = (
+        "q",
+        "api_key",
+        "apikey",
+        "token",
+        "access_token",
+        "auth",
+        "key",
+        "secret",
+        "password",
+        "passwd",
+        "pwd",
+        "pass",
+        "authorization",
+        "sig",
+        "signature",
+    )
+
+
 ################################################################################
-# EXPORT FORMAT - Configuration export/import formats
+# EXPORT FORMAT CONSTANTS
 ################################################################################
+
 
 class ExportFormat:
-    """Configuration export/import format constants.
+    """Configuration export and import serialization format constants."""
 
-    Attributes:
-        YAML: YAML format identifier.
-        JSON: JSON format identifier.
-        EXT_YAML: YAML file extension (.yaml).
-        EXT_YML: Alternative YAML extension (.yml).
-        EXT_JSON: JSON file extension (.json).
-    """
-    YAML = 'yaml'
-    JSON = 'json'
-    
-    # File extensions
-    EXT_YAML = '.yaml'
-    EXT_YML = '.yml'
-    EXT_JSON = '.json'
-    
+    YAML = "yaml"
+    JSON = "json"
+    EXT_YAML = ".yaml"
+    EXT_YML = ".yml"
+    EXT_JSON = ".json"
+
     @classmethod
     def from_extension(cls, ext: str) -> str:
-        """Get format type from file extension.
+        """Resolve export format from a file extension.
 
         Args:
-            ext: File extension (e.g., '.yaml', '.json').
+            ext: Lowercase file extension (e.g. ``'.yaml'`` or ``'.json'``).
 
         Returns:
-            Format type constant (YAML or JSON). Defaults to YAML.
+            Resolved format identifier (defaults to ``'yaml'``).
         """
         if ext in (cls.EXT_YAML, cls.EXT_YML):
             return cls.YAML
-        elif ext == cls.EXT_JSON:
+        if ext == cls.EXT_JSON:
             return cls.JSON
-        return cls.YAML  # Default
-    
+        return cls.YAML
+
     @classmethod
     def is_valid(cls, format_type: str) -> bool:
-        """Check if format type is valid.
+        """Check whether ``format_type`` is a supported export format.
 
         Args:
-            format_type: Format type string to validate.
+            format_type: Format identifier string.
 
         Returns:
-            True if valid (YAML or JSON), False otherwise.
+            True if ``'yaml'`` or ``'json'``, False otherwise.
         """
         return format_type in (cls.YAML, cls.JSON)
 
 
 ################################################################################
-# DATABASE DEFAULTS - SQLite Connection Pool Config
+# DATABASE & STORAGE DEFAULTS
 ################################################################################
 
-class DatabaseDefaults:
-    """Default values for SQLite database configuration and wear-leveling.
 
-    Attributes:
-        DB_SCHEMA_VERSION: Current database schema version (PRAGMA user_version).
-        UNVERSIONED_SCHEMA: Initial schema version for new databases (0).
-        MAX_CONNECTIONS: Maximum connections in the pool.
-        CONNECT_TIMEOUT: SQLite connect timeout in seconds.
-        POOL_GET_TIMEOUT: Timeout to acquire a connection from pool.
-        POOL_PUT_TIMEOUT: Timeout to return a connection to pool.
-        BUSY_TIMEOUT_MS: SQLite lock wait timeout in milliseconds (5 s).
-        JOURNAL_SIZE_LIMIT: Maximum WAL file size after checkpoints (64 MB).
-        CACHE_SIZE_KB: Negative value sets RAM page cache in KiB (16 MB).
-        MMAP_SIZE: Memory-mapped Read-I/O size in bytes (128 MB).
-        DB_TIMESTAMP_FORMAT: Timestamp format used for database entries.
-        DYNDNS_BUNDLE_ID_PREFIX: Key prefix in app_config for DynDNS bundle UUIDs.
-    """
+class DatabaseDefaults:
+    """Default values for SQLite connection pooling and wear-leveling."""
+
     DB_SCHEMA_VERSION = 3
     UNVERSIONED_SCHEMA = 0
     MAX_CONNECTIONS = 5
@@ -337,10 +280,11 @@ class DatabaseDefaults:
 
 
 class StorageConstants:
-    """Units and conversion factors for disk and database storage calculations."""
+    """Units and conversion factors for disk and database storage metrics."""
+
     BYTES_PER_KB = 1024.0
-    BYTES_PER_MB = 1024.0 ** 2
-    BYTES_PER_GB = 1024.0 ** 3
+    BYTES_PER_MB = 1024.0**2
+    BYTES_PER_GB = 1024.0**3
     PERCENTAGE_FACTOR = 100.0
     DEFAULT_DECIMALS = 2
     DISK_PERCENT_DECIMALS = 1
@@ -348,53 +292,59 @@ class StorageConstants:
 
 
 ################################################################################
-# DNS SETTINGS - Default DNS Configuration
+# DNS, LOGGING, DAEMON, PATHS & NETWORK DEFAULTS
 ################################################################################
 
-class DNSDefaults:
-    """Namespace for default DNS settings."""
-    DEFAULT_TTL = 3600  # seconds
-    DEFAULT_UPDATE_METHOD = "dyndns"
 
+class UpdateMethod(StrEnum):
+    """Supported DNS update methods."""
 
-class UpdateMethod:
-    """Namespace for DNS update method options."""
     DYNDNS = "dyndns"
     REST = "rest"
 
 
-################################################################################
-# LOGGING SETTINGS - Default Logging Configuration
-################################################################################
+class DNSDefaults:
+    """Default DNS synchronization settings."""
+
+    DEFAULT_TTL = 3600
+    DEFAULT_UPDATE_METHOD = UpdateMethod.DYNDNS
+
 
 class LoggingDefaults:
-    """Namespace for default logging configuration."""
+    """Default logging and native systemd journald socket configuration."""
+
     LEVEL = "INFO"
     CONSOLE_COLORS = True
     SUCCESS_LEVEL = 25
+    JOURNAL_SOCKET_PATH = "/run/systemd/journal/socket"
+    MAX_JOURNAL_MESSAGE_BYTES = 65536
+    DEFAULT_LOG_LIMIT = 25
+    MAX_LOG_LIMIT = 200
+    SYSLOG_PRIORITY_CRITICAL = "2"
+    SYSLOG_PRIORITY_ERROR = "3"
+    SYSLOG_PRIORITY_WARNING = "4"
+    SYSLOG_PRIORITY_NOTICE = "5"
+    SYSLOG_PRIORITY_INFO = "6"
+    SYSLOG_PRIORITY_DEBUG = "7"
 
-
-################################################################################
-# DAEMON SETTINGS - Default Daemon Configuration
-################################################################################
 
 class DaemonDefaults:
-    """Namespace for default daemon settings."""
+    """Default daemon lifecycle and interval settings."""
+
     ENABLED = False
-    CHECK_INTERVAL = 300  # seconds
+    CHECK_INTERVAL = 300
+    DEFAULT_CYCLE_INTERVAL = 300
     MAX_RETRIES = 3
-    RETRY_DELAY = 60  # seconds
+    RETRY_DELAY = 60
+    ERROR_RETRY_DELAY = 10
     SYNC_CHECKS = True
-    STOP_TIMEOUT = 30  # seconds
-    STOP_CHECK_INTERVAL = 1  # seconds
+    STOP_TIMEOUT = 30
+    STOP_CHECK_INTERVAL = 1
 
-
-################################################################################
-# APPLICATION PATHS - Default File & Directory Paths
-################################################################################
 
 class AppPaths:
-    """Namespace for default application paths and filenames."""
+    """Default FHS 3.0 application paths and filenames."""
+
     DATA_DIR = "/var/lib/dyndns"
     RUNTIME_DIR = "/run/dyndns"
     DB_FILE = "dyndns.db"
@@ -402,43 +352,41 @@ class AppPaths:
     ENCRYPTION_KEY_FILE = ".encryption_key"
 
 
-################################################################################
-# API SETTINGS - Default Provider API Configuration
-################################################################################
-
 class ProviderAPI:
-    """Namespace for DNS Provider API defaults."""
+    """Default DNS Provider API client and retry configuration."""
+
     BASE_URL = "https://api.hosting.ionos.com/dns/v1"
-    TIMEOUT = 30  # seconds
+    TIMEOUT = 30
     RETRY_ATTEMPTS = 3
     AUTH_MAX_RETRIES = 2
-    AUTH_RETRY_DELAY = 2  # seconds
-
-    # Error codes
+    AUTH_RETRY_DELAY = 2
+    BACKOFF_BASE = 2
+    MAX_RETRY_DELAY = 60.0
+    SUPPORTED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+    RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
     ERR_RECORD_NOT_FOUND = "RECORD_NOT_FOUND"
 
 
-################################################################################
-# NETWORK SETTINGS - Default Network & IP Detection Configuration
-################################################################################
-
 class NetworkAPI:
-    """Namespace for IP detection service defaults."""
+    """Default public IP detection endpoints and retry configuration."""
+
     IPV4_URL = "https://api.ipify.org"
     IPV6_URL = "https://api6.ipify.org"
     IPV4_ENABLED = True
     IPV6_ENABLED = True
-    TIMEOUT = 10  # seconds
+    TIMEOUT = 10
     RETRY_ATTEMPTS = 3
-    RETRY_DELAY = 2  # seconds
+    RETRY_DELAY = 2
 
 
 ################################################################################
-# EXCEPTION DEFAULTS - Default Exception Messages
+# EXCEPTION DEFAULTS
 ################################################################################
+
 
 class ExceptionMessages:
-    """Default error messages for custom exceptions."""
+    """Default error messages for the custom exception hierarchy."""
+
     DEFAULT = "An application error occurred"
     DATABASE = "Database operation failed"
     DATABASE_LOCKED = "Database is currently locked by another process"

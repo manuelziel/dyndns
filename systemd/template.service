@@ -11,10 +11,12 @@ Group={{SERVICE_GROUP}}
 WorkingDirectory={{SHARE_DIR}}
 RuntimeDirectory={{SOFTWARE_DIR_NAME}}
 RuntimeDirectoryMode={{RUNTIME_DIRECTORY_MODE}}
+StateDirectory={{SOFTWARE_DIR_NAME}}
+StateDirectoryMode={{STATE_DIRECTORY_MODE}}
 UMask={{SERVICE_UMASK}}
 SupplementaryGroups={{SERVICE_SUPPLEMENTARY_GROUPS}}
 PIDFile={{SERVICE_PIDFILE}}
-Environment="{{SERVICE_ENVIRONMENT}}"
+Environment={{SERVICE_ENVIRONMENT}}
 ExecStart={{SERVICE_EXEC_START}}
 ExecStop={{SERVICE_EXEC_STOP}}
 Restart={{SERVICE_RESTART}}
@@ -30,8 +32,15 @@ SyslogIdentifier={{SOFTWARE_DIR_NAME}}
 # Security hardening
 NoNewPrivileges={{SERVICE_NO_NEW_PRIVILEGES}}
 PrivateTmp={{SERVICE_PRIVATE_TMP}}
+PrivateDevices={{SERVICE_PRIVATE_DEVICES}}
 ProtectSystem={{SERVICE_PROTECT_SYSTEM}}
 ProtectHome={{SERVICE_PROTECT_HOME}}
+ProtectKernelTunables={{SERVICE_PROTECT_KERNEL_TUNABLES}}
+ProtectControlGroups={{SERVICE_PROTECT_CONTROL_GROUPS}}
+RestrictSUIDSGID={{SERVICE_RESTRICT_SUIDSGID}}
+LockPersonality={{SERVICE_LOCK_PERSONALITY}}
+ReadWritePaths={{VAR_LIB_DIR}}
+ReadWritePaths={{DYNAMIC_READ_WRITE_PATHS}}
 ReadWritePaths={{SERVICE_READ_WRITE_PATHS}}
 
 [Install]

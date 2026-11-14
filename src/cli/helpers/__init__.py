@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""CLI helper packages for input, output, and validation utilities.
-
-This package exposes reusable functions for handling interactive CLI operations.
+"""CLI helper package for interactive input, TTY output, and validation.
 
 Author: Manuel Ziel
 License: MIT
@@ -13,42 +11,40 @@ License: MIT
 
 from .validate import (
     is_valid_domain,
+    is_valid_file_path,
     is_valid_ipv4,
     is_valid_ipv6,
     is_valid_path,
     resolve_path,
-    is_valid_file_path,
 )
-
 from .output import (
-    row_to_dict,
-    print_status,
-    print_success,
-    print_error,
-    print_warning,
-    print_info,
-    print_debug,
-    print_status_line,
-    print_section,
-    print_subsection,
-    print_banner,
     clear_screen,
+    display_zone_details,
     format_table,
-    display_zone_details
+    print_banner,
+    print_debug,
+    print_error,
+    print_info,
+    print_section,
+    print_status,
+    print_status_line,
+    print_subsection,
+    print_success,
+    print_warning,
+    row_to_dict,
 )
-
 from .input import (
-    get_placeholder_ip,
-    safe_input,
-    wait_for_enter,
     confirm_action,
+    get_choice_from_list,
+    get_placeholder_ip,
     get_valid_int,
     get_valid_string,
-    get_choice_from_list,
-    print_paginated_list,
-    select_zone,
-    select_record,
     get_zone_by_id_validated,
+    print_paginated_list,
+    safe_input,
+    select_record,
+    select_zone,
+    wait_for_enter,
 )
 
 ################################################################################
@@ -57,37 +53,37 @@ from .input import (
 
 __all__ = [
     # Input
-    'get_placeholder_ip',
-    'safe_input',
-    'wait_for_enter',
-    'confirm_action',
-    'get_valid_int',
-    'get_valid_string',
-    'get_choice_from_list',
-    'print_paginated_list',
-    'select_zone',
-    'select_record',
-    'get_zone_by_id_validated',
-    'resolve_path',
-    'is_valid_file_path',
+    "confirm_action",
+    "get_choice_from_list",
+    "get_placeholder_ip",
+    "get_valid_int",
+    "get_valid_string",
+    "get_zone_by_id_validated",
+    "is_valid_file_path",
+    "print_paginated_list",
+    "resolve_path",
+    "safe_input",
+    "select_record",
+    "select_zone",
+    "wait_for_enter",
     # Output
-    'row_to_dict',
-    'print_status',
-    'print_status_line',
-    'print_success',
-    'print_error',
-    'print_warning',
-    'print_info',
-    'print_debug',
-    'print_section',
-    'print_subsection',
-    'print_banner',
-    'clear_screen',
-    'format_table',
-    'display_zone_details',
+    "clear_screen",
+    "display_zone_details",
+    "format_table",
+    "print_banner",
+    "print_debug",
+    "print_error",
+    "print_info",
+    "print_section",
+    "print_status",
+    "print_status_line",
+    "print_subsection",
+    "print_success",
+    "print_warning",
+    "row_to_dict",
     # Validate
-    'is_valid_domain',
-    'is_valid_ipv4',
-    'is_valid_ipv6',
-    'is_valid_path',
+    "is_valid_domain",
+    "is_valid_ipv4",
+    "is_valid_ipv6",
+    "is_valid_path",
 ]
